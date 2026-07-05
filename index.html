@@ -275,7 +275,10 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <label>Movimenti (<span id="tm-count"></span>)</label>
     <div id="tm-movs" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 10px"></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap">
-      <button class="btn danger small" id="tm-hide"></button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn danger small" id="tm-hide"></button>
+        <button class="btn danger small" id="tm-delete">🗑 Elimina definitivamente</button>
+      </div>
       <div style="display:flex;gap:10px">
         <button class="btn secondary" onclick="closeModal('tenantmodal')">Annulla</button>
         <button class="btn" onclick="saveTenant()">Salva</button>
@@ -774,6 +777,32 @@ function ignoreTenantInternal(tenantId){
     })();
   }
   return n;
+}
+
+/* Eliminazione definitiva: scheda + tutti i suoi movimenti (per inquilini creati per errore) */
+function deleteTenantCore(tenantId){
+  const t = state.tenants[tenantId];
+  if (!t) return null;
+  const keys = Object.keys(state.movements).filter(k=>state.movements[k].tenantId===tenantId);
+  for (const k of keys) delete state.movements[k];
+  delete state.tenants[tenantId];
+  return { name: t.name, removed: keys.length };
+}
+
+function deleteTenant(tenantId){
+  const t = state.tenants[tenantId];
+  if (!t) return;
+  const n = Object.values(state.movements).filter(m=>m.tenantId===tenantId).length;
+  if (!confirm(`Eliminare DEFINITIVAMENTE "${t.name}" e i suoi ${n} movimenti, per tutti gli utenti?\n\nAttenzione: se riimporti un estratto conto che contiene i suoi bonifici, l'ordinante ricomparirà come nuovo. Se non è un inquilino, usa piuttosto "Ignora questo ordinante".`)) return;
+  const res = deleteTenantCore(tenantId);
+  if (sb){
+    (async ()=>{
+      await sb.from('movimenti').delete().eq('inquilino_id', tenantId).then(dbErr);
+      await dbDeleteTenant(tenantId);
+    })();
+  }
+  closeModal('tenantmodal'); renderAll();
+  showToast(`"${res.name}" eliminato con ${res.removed} movimenti.`);
 }
 
 /* Promozione: da ignorato a inquilino, recuperando i movimenti storici accantonati */
@@ -1539,6 +1568,7 @@ function openTenant(id){
     saveState(); closeModal('tenantmodal'); renderAll();
     showToast(`Ordinante ignorato: ${n} movimenti accantonati.`);
   };
+  $('tm-delete').onclick = ()=> deleteTenant(t.id);
   openModal('tenantmodal');
 }
 
@@ -1819,7 +1849,7 @@ if (typeof module !== 'undefined' && module.exports){
   module.exports = { parseCSV, detectDelimiter, parseItalianDate, parseItalianAmount,
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
-    viewerTemplate, movMonth, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature,
+    viewerTemplate, movMonth, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
