@@ -166,10 +166,10 @@ footer button:hover{background:var(--bg);color:var(--ink)}
       <p class="muted" style="margin-bottom:14px">Esporta l'estratto conto dal tuo home banking in formato <b>CSV o Excel</b> e caricalo qui. L'elaborazione avviene interamente nel tuo browser: <b>nessun dato viene inviato a server esterni</b>. Puoi caricare più estratti nel tempo: i movimenti già importati vengono riconosciuti e non duplicati.</p>
       <div class="dropzone" id="dropzone">
         <div class="big">📄</div>
-        <b>Trascina qui il file, oppure clicca per sceglierlo</b>
-        <p>Formati supportati: .csv, .txt, .xlsx, .xls — separatore ; o , date gg/mm/aaaa, importi con virgola</p>
+        <b>Trascina qui uno o più file, oppure clicca per sceglierli</b>
+        <p>Formati supportati: .csv, .txt, .xlsx, .xls — separatore ; o , date gg/mm/aaaa, importi con virgola.<br>Puoi selezionare più estratti insieme: verranno elaborati uno alla volta.</p>
       </div>
-      <input type="file" id="fileinput" accept=".csv,.txt,.xlsx,.xls" style="display:none">
+      <input type="file" id="fileinput" accept=".csv,.txt,.xlsx,.xls" multiple style="display:none">
     </div>
   </div>
 </main>
@@ -184,7 +184,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 <!-- Modal mappatura colonne -->
 <div class="modal-bg" id="mapmodal">
   <div class="modal" style="max-width:760px">
-    <h2>Verifica le colonne <button class="close" onclick="closeModal('mapmodal')">×</button></h2>
+    <h2><span>Verifica le colonne <span class="muted" id="map-file" style="font-size:.75rem;font-weight:500"></span></span> <button class="close" onclick="cancelMapping()">×</button></h2>
     <p class="muted" id="mapinfo" style="margin-top:6px"></p>
     <div style="background:#f0f5ff;border:1px solid #c7d8f7;border-radius:9px;padding:10px 14px;margin-top:12px">
       <label style="margin-top:0">A quale proprietario / conto appartiene questo estratto?</label>
@@ -201,7 +201,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <p class="muted">Anteprima delle prime righe del file:</p>
     <div class="tablewrap" style="margin-top:8px"><table class="maptable" id="maptable"></table></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
-      <button class="btn secondary" onclick="closeModal('mapmodal')">Annulla</button>
+      <button class="btn secondary" onclick="cancelMapping()">Salta questo file</button>
       <button class="btn" onclick="confirmImport()">Importa i movimenti in entrata</button>
     </div>
   </div>
@@ -217,13 +217,27 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <select id="mm-tenant" size="5" style="margin-top:6px;height:auto" onchange="manualTenantPicked()"></select>
     <div class="row2">
       <div><label>Importo (€)</label><input type="number" id="mm-amount" min="0" step="10" inputmode="decimal"></div>
-      <div><label>Data</label><input type="date" id="mm-date"></div>
+      <div><label>Data</label><input type="date" id="mm-date" onchange="if(this.value)document.getElementById('mm-ref').value=this.value.slice(0,7)"></div>
     </div>
+    <label>Mese di competenza (a quale mese di affitto si riferisce)</label>
+    <input type="month" id="mm-ref">
     <label>Nota (opzionale)</label>
     <input type="text" id="mm-note" placeholder="es. contanti, assegno…">
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn secondary" onclick="closeModal('manualmodal')">Annulla</button>
       <button class="btn" onclick="saveManual()">Registra pagamento</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal competenza acconti/anticipi -->
+<div class="modal-bg" id="refmodal">
+  <div class="modal" style="max-width:560px">
+    <h2>A quale mese si riferiscono? <button class="close" onclick="refConfirm()">×</button></h2>
+    <p class="muted" style="margin-top:6px">Questi pagamenti sembrano acconti, saldi o anticipi: indica il mese di affitto a cui si riferiscono. Potrai sempre correggerli dopo, dal dettaglio del mese.</p>
+    <div id="ref-body" style="margin-top:12px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 12px"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn" onclick="refConfirm()">Conferma</button>
     </div>
   </div>
 </div>
@@ -555,6 +569,50 @@ function dedupKey(dateISO, amount, cpNorm){
   return dateISO + '|' + Math.round(amount*100) + '|' + cpNorm;
 }
 
+/* Mese di competenza: il mese a cui il pagamento si riferisce (default: mese del bonifico).
+   Permette di attribuire acconti/saldi al mese giusto. */
+function movMonth(m){ return m.refMonth || m.date.slice(0,7); }
+
+function shiftMonth(ym, delta){
+  let [y, mo] = ym.split('-').map(Number);
+  mo += delta;
+  while (mo < 1){ mo += 12; y--; }
+  while (mo > 12){ mo -= 12; y++; }
+  return y + '-' + pad2(mo);
+}
+
+/* Individua i movimenti appena importati con competenza dubbia:
+   - acconto (importo < atteso) mentre il mese precedente non risulta saldato
+   - pagamento in un mese già saldato (probabile anticipo del mese successivo) */
+function detectAmbiguous(keys){
+  const out = [];
+  const sums = sumsByTenantMonth();
+  for (const k of keys){
+    const m = state.movements[k];
+    if (!m || m.ignored || !m.tenantId || m.refMonth) continue;
+    const t = state.tenants[m.tenantId];
+    if (!t || !t.expected) continue;
+    const ym = m.date.slice(0,7);
+    const prev = shiftMonth(ym,-1), next = shiftMonth(ym,1);
+    const sumPrev = sums[t.id]?.[prev] || 0;
+    const sumYmOthers = (sums[t.id]?.[ym] || 0) - m.amount;
+    const partial = m.amount < t.expected - 0.01;
+    if (partial && sumPrev < t.expected - 0.01 && sumPrev + m.amount <= t.expected * 1.2){
+      out.push({ key:k, suggest: sumPrev > 0 ? prev : ym });     // può completare il mese precedente
+    } else if (sumYmOthers >= t.expected - 0.01){
+      out.push({ key:k, suggest: next });                        // mese già saldato: probabile anticipo
+    }
+  }
+  return out;
+}
+
+function setRefMonth(key, ym){
+  const m = state.movements[key];
+  if (!m) return;
+  m.refMonth = (ym === m.date.slice(0,7)) ? null : ym;
+  if (sb) dbUpsertMovs([m]);
+}
+
 /* ---------------- Persistenza su Supabase ----------------
    Lo stato in memoria resta la fonte per il rendering; ogni mutazione viene
    propagata al database. Il canale Realtime ricarica lo stato quando un altro
@@ -568,7 +626,7 @@ function dbErr(r){
 }
 const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:m.desc||'',
   ordinante:m.cp||'', ordinante_norm:m.cpNorm||'', inquilino_id:m.tenantId||null,
-  proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual });
+  proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
   proprietario_id:t.ownerId||null, alias:t.aliases||[] });
 
@@ -594,8 +652,12 @@ async function loadAll(){
     ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
-    ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale });
+    ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null });
   g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
+  // memoria dei formati file già confermati
+  state.mappings = {};
+  const mp = await sb.from('mappature').select('*');
+  if (!mp.error && mp.data) mp.data.forEach(r => state.mappings[r.firma] = r.mappa);
 }
 
 let rtTimer = null;
@@ -797,11 +859,35 @@ async function persistImport(ownerId, res){
 /* ---------------- Pipeline di importazione file ---------------- */
 
 let pendingRows = null, pendingHeaderIdx = -1;
+let fileQueue = [], currentFileName = '', queueTotal = 0;
+
+/* Coda multi-file: ogni estratto viene elaborato in sequenza, ognuno con la sua verifica colonne */
+function handleFiles(list){
+  fileQueue = [...list];
+  queueTotal = fileQueue.length;
+  if (queueTotal > 1) showToast(`${queueTotal} file in coda: verranno elaborati uno alla volta.`);
+  processNextFile();
+}
+
+function processNextFile(){
+  const f = fileQueue.shift();
+  if (!f){ queueTotal = 0; return; }
+  currentFileName = f.name;
+  handleFile(f);
+}
+
+function cancelMapping(){
+  closeModal('mapmodal');
+  pendingRows = null;
+  if (fileQueue.length) showToast(`File "${currentFileName}" saltato.`);
+  processNextFile();
+}
 
 function handleFile(file){
   const name = file.name.toLowerCase();
   if (name.endsWith('.pdf')){
     showToast('I PDF non sono supportati: esporta l\'estratto conto in CSV o Excel dall\'home banking.');
+    processNextFile();
     return;
   }
   if (name.endsWith('.xlsx') || name.endsWith('.xls')){
@@ -813,16 +899,16 @@ function handleFile(file){
           const ws = wb.Sheets[wb.SheetNames[0]];
           const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
           startMapping(rows.filter(r=>r.some(c=>String(c).trim()!=='')));
-        }catch(err){ showToast('Impossibile leggere il file Excel: ' + err.message); }
+        }catch(err){ showToast('Impossibile leggere il file Excel: ' + err.message); processNextFile(); }
       };
       reader.readAsArrayBuffer(file);
-    }).catch(()=> showToast('Per leggere i file Excel serve la connessione internet (libreria caricata al volo). In alternativa esporta in CSV.'));
+    }).catch(()=>{ showToast('Per leggere i file Excel serve la connessione internet (libreria caricata al volo). In alternativa esporta in CSV.'); processNextFile(); });
     return;
   }
   const reader = new FileReader();
   reader.onload = e => {
     const { rows } = parseCSV(e.target.result);
-    if (!rows.length){ showToast('Il file sembra vuoto.'); return; }
+    if (!rows.length){ showToast(`Il file "${currentFileName}" sembra vuoto.`); processNextFile(); return; }
     startMapping(rows);
   };
   reader.readAsText(file, 'UTF-8');
@@ -838,10 +924,19 @@ function loadSheetJS(){
   });
 }
 
+function formatSignature(rows, headerIdx){
+  const nCols = Math.max(...rows.slice(0,20).map(r=>r.length));
+  return headerIdx>=0 ? normName(rows[headerIdx].map(c=>String(c)).join(' | ')) : 'SENZA INTESTAZIONE ' + nCols;
+}
+
 function startMapping(rows){
   pendingRows = rows;
   pendingHeaderIdx = findHeaderRow(rows);
-  const map = autoDetectColumns(rows, pendingHeaderIdx);
+  let map = autoDetectColumns(rows, pendingHeaderIdx);
+  // memoria formati: se questo layout è già stato confermato in passato, riusa la mappatura
+  const sig = formatSignature(rows, pendingHeaderIdx);
+  const remembered = state.mappings && state.mappings[sig];
+  if (remembered) map = Object.assign({}, map, remembered);
   const nCols = Math.max(...rows.slice(0,20).map(r=>r.length));
   const header = pendingHeaderIdx>=0 ? rows[pendingHeaderIdx] : null;
 
@@ -879,10 +974,16 @@ function startMapping(rows){
   ow.appendChild(newOpt);
   if (!owners.length) ow.value = '__new__';
 
+  // indicazione del file corrente e della posizione in coda
+  const pos = queueTotal > 1 ? ` (${queueTotal - fileQueue.length} di ${queueTotal})` : '';
+  document.getElementById('map-file').textContent = '— ' + currentFileName + pos;
+
   const auto = map.date>=0 && (map.amount>=0 || map.inflow>=0);
-  document.getElementById('mapinfo').textContent = auto
-    ? 'Colonne riconosciute automaticamente. Controlla che siano corrette e conferma. Verranno importati solo i movimenti in entrata (bonifici ricevuti).'
-    : '⚠️ Non sono riuscito a riconoscere tutte le colonne: indicale manualmente qui sotto.';
+  document.getElementById('mapinfo').textContent = remembered
+    ? '✓ Formato già visto in un import precedente: mappatura recuperata dalla memoria. Controlla e conferma.'
+    : auto
+    ? 'Colonne riconosciute automaticamente (analisi di intestazioni e contenuto). Controlla che siano corrette e conferma. Verranno importati solo i movimenti in entrata (bonifici ricevuti).'
+    : '⚠️ Formato non riconosciuto: indica le colonne manualmente qui sotto. L\'app memorizzerà questa mappatura per i prossimi import dello stesso formato.';
 
   // anteprima
   const tbl = document.getElementById('maptable');
@@ -913,6 +1014,12 @@ function confirmImport(){
     ownerId = createOwner(name).id;
   }
   state.lastOwnerId = ownerId;
+
+  // memorizza la mappatura confermata per questo formato di file (condivisa tra gli utenti)
+  const sig = formatSignature(pendingRows, pendingHeaderIdx);
+  state.mappings = state.mappings || {};
+  state.mappings[sig] = ci;
+  if (sb) sb.from('mappature').upsert({ firma: sig, mappa: ci }).then(dbErr);
 
   const start = pendingHeaderIdx>=0 ? pendingHeaderIdx+1 : 0;
   const list = [];
@@ -1007,7 +1114,8 @@ function triageConfirm(){
 function triageCancel(){
   closeModal('triagemodal');
   pendingImport = null;
-  showToast('Import annullato: nessun movimento è stato salvato.');
+  showToast('Import annullato: nessun movimento di questo file è stato salvato.');
+  processNextFile();
 }
 
 function finishImport(list, ownerId, skipped){
@@ -1015,11 +1123,53 @@ function finishImport(list, ownerId, skipped){
   persistImport(ownerId, res);
   renderAll();
   switchView('panoramica');
-  showToast(`Importati ${res.added} movimenti` +
+  const pfx = queueTotal > 1 ? `"${currentFileName}": ` : '';
+  showToast(pfx + `importati ${res.added} movimenti` +
     (res.newTenants ? ` · ${res.newTenants} nuovi inquilini` : '') +
     ` · ${res.dups} duplicati scartati` +
     (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti ignorati` : '') +
     (skipped ? ` · ${skipped} righe non in entrata` : '') + '.');
+  // acconti/anticipi con competenza dubbia: chiedi prima di passare al file successivo
+  const amb = detectAmbiguous(res.newMovKeys);
+  if (amb.length) openRefModal(amb);
+  else processNextFile();
+}
+
+/* ---- dialogo mese di competenza ---- */
+
+function openRefModal(items){
+  const body = $('ref-body');
+  body.innerHTML = items.map((it,i)=>{
+    const m = state.movements[it.key];
+    const t = state.tenants[m.tenantId];
+    const ym = m.date.slice(0,7);
+    const opts = [shiftMonth(ym,-1), ym, shiftMonth(ym,1)].map(y=>{
+      const hint = y<ym ? ' (completa il mese precedente)' : y>ym ? ' (anticipo)' : ' (mese del bonifico)';
+      return `<option value="${y}" ${y===it.suggest?'selected':''}>${monthLabel(y)}${hint}</option>`;
+    }).join('');
+    return `<div class="mrow" style="gap:12px">
+      <div style="min-width:0;flex:1">
+        <b>${escapeHtml(t.name)}</b> · <span class="amount pos">${fmtEur(m.amount)}</span>
+        <div class="muted" style="font-size:.75rem">bonifico del ${m.date.split('-').reverse().join('/')}${t.expected?' · atteso '+fmtEur(t.expected)+'/mese':''}</div>
+      </div>
+      <select data-refkey="${escapeHtml(it.key)}" style="width:auto;flex-shrink:0">${opts}</select>
+    </div>`;
+  }).join('');
+  openModal('refmodal');
+}
+
+function refConfirm(){
+  const changed = [];
+  document.querySelectorAll('#ref-body select').forEach(sel=>{
+    const m = state.movements[sel.dataset.refkey];
+    if (!m) return;
+    m.refMonth = (sel.value === m.date.slice(0,7)) ? null : sel.value;
+    changed.push(m);
+  });
+  if (sb && changed.length) dbUpsertMovs(changed);
+  closeModal('refmodal');
+  renderAll();
+  processNextFile();
 }
 
 /* ---------------- Rendering ---------------- */
@@ -1091,7 +1241,7 @@ function setUI(k,v){
 
 function monthsRange(){
   const set = new Set();
-  for (const m of activeMovements()) set.add(m.date.slice(0,7));
+  for (const m of activeMovements()) set.add(movMonth(m));
   if (!set.size) return [];
   const arr = [...set].sort();
   const out = [];
@@ -1112,7 +1262,7 @@ function monthLabel(ym){
 function sumsByTenantMonth(){
   const sums = {};
   for (const m of activeMovements()){
-    const ym = m.date.slice(0,7);
+    const ym = movMonth(m);
     (sums[m.tenantId] = sums[m.tenantId] || {})[ym] = (sums[m.tenantId]?.[ym] || 0) + m.amount;
   }
   return sums;
@@ -1145,8 +1295,8 @@ function renderPanoramica(){
   const tenants = filteredTenants(sums);
   const curYM = nowYM();
   const firstMonth = {};
-  for (const m of Object.values(state.movements)){
-    const ym = m.date.slice(0,7);
+  for (const m of activeMovements()){
+    const ym = movMonth(m);
     if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym;
   }
   let html = `<h2>Panoramica pagamenti</h2>
@@ -1218,7 +1368,7 @@ function renderPanoramica(){
 function lastMonthOf(tenantId){
   let last = null;
   for (const m of activeMovements())
-    if (m.tenantId===tenantId){ const ym=m.date.slice(0,7); if (!last||ym>last) last=ym; }
+    if (m.tenantId===tenantId){ const ym=movMonth(m); if (!last||ym>last) last=ym; }
   return last;
 }
 
@@ -1363,13 +1513,14 @@ function openTenant(id){
   cb.textContent = t.ceased ? '↩️ Riattiva inquilino' : '⏹ Segna come cessato';
   cb.onclick = e=>{ e.preventDefault(); toggleCeased(t.id); closeModal('tenantmodal'); };
   $('tm-aliases').innerHTML = t.aliases.map(a=>`<span class="chip">${escapeHtml(titleCase(a))}</span>`).join('') || '<span class="muted">nessuno</span>';
-  const movs = Object.values(state.movements).filter(m=>m.tenantId===id).sort((a,b)=>b.date.localeCompare(a.date));
+  const movs = Object.values(state.movements).filter(m=>m.tenantId===id && !m.ignored).sort((a,b)=>b.date.localeCompare(a.date));
   $('tm-count').textContent = movs.length;
   $('tm-movs').innerHTML = movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} <span class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,44))}</span></span><span class="amount pos">${fmtEur(m.amount)}</span></div>`).join('') || '<p class="muted" style="padding:8px 0">Nessun movimento.</p>';
-  // riepilogo mensile
+  // riepilogo mensile (per mese di competenza)
   const sums = {};
-  for (const m of movs){ const ym=m.date.slice(0,7); sums[ym]=(sums[ym]||0)+m.amount; }
-  const months = monthsRange().filter(ym => movs.length && ym >= movs[movs.length-1].date.slice(0,7));
+  for (const m of movs){ const ym=movMonth(m); sums[ym]=(sums[ym]||0)+m.amount; }
+  const first = movs.length ? movs.map(movMonth).sort()[0] : null;
+  const months = monthsRange().filter(ym => first && ym >= first);
   let mh = '<table><tr><th style="text-align:left">Mese</th><th>Ricevuto</th><th>Stato</th></tr>';
   const curYM = nowYM();
   for (const ym of months){
@@ -1411,11 +1562,16 @@ function saveTenant(){
 
 function openCell(tenantId, ym){
   const t = state.tenants[tenantId];
-  const movs = Object.values(state.movements).filter(m=>m.tenantId===tenantId && m.date.startsWith(ym)).sort((a,b)=>a.date.localeCompare(b.date));
+  const movs = activeMovements().filter(m=>m.tenantId===tenantId && movMonth(m)===ym).sort((a,b)=>a.date.localeCompare(b.date));
   $('cm-title').innerHTML = `${escapeHtml(t.name)} — ${monthLabel(ym)} <button class="close" onclick="closeModal('cellmodal')">×</button>`;
   const tot = movs.reduce((a,m)=>a+m.amount,0);
+  const refSel = m => {
+    const cur = movMonth(m);
+    return `<select style="width:auto;font-size:.68rem;padding:3px 5px" title="Mese di competenza" onchange="setRefMonth('${m.key}', this.value);closeModal('cellmodal');renderAll();showToast('Competenza aggiornata.')">` +
+      [shiftMonth(cur,-1), cur, shiftMonth(cur,1)].map(y=>`<option value="${y}" ${y===cur?'selected':''}>comp. ${monthLabel(y)}</option>`).join('') + '</select>';
+  };
   let html = movs.length
-    ? movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${m.manual?'<span class="badge man">manuale</span>':''}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px"><span class="amount pos">${fmtEur(m.amount)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`).join('')
+    ? movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${m.manual?'<span class="badge man">manuale</span>':''}${m.refMonth?'<span class="badge warn">acconto/saldo</span>':''}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px">${refSel(m)}<span class="amount pos">${fmtEur(m.amount)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`).join('')
     : '<p class="muted">Nessun bonifico ricevuto in questo mese.</p>';
   if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(tot)}</b></div>`;
   if (t.expected) html += `<p class="muted" style="margin-top:8px">Affitto atteso: ${fmtEur(t.expected)}</p>`;
@@ -1435,6 +1591,7 @@ function openManual(){
   fillManualTenants('');
   $('mm-amount').value = '';
   $('mm-date').value = new Date().toISOString().slice(0,10);
+  $('mm-ref').value = new Date().toISOString().slice(0,7);
   $('mm-note').value = '';
   openModal('manualmodal');
 }
@@ -1462,12 +1619,14 @@ function saveManual(){
   if (isNaN(amount) || amount<=0){ showToast('Inserisci un importo valido.'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)){ showToast('Inserisci una data valida.'); return; }
   const note = $('mm-note').value.trim();
+  const ref = $('mm-ref').value;
   const key = newId('manual:');
   state.movements[key] = {
     key, date, amount,
     desc: 'Pagamento manuale' + (note ? ' — ' + note : ''),
     cp: t.name, cpNorm: t.aliases[0] || normName(t.name),
-    tenantId: t.id, ownerId: t.ownerId || null, ignored: false, manual: true
+    tenantId: t.id, ownerId: t.ownerId || null, ignored: false, manual: true,
+    refMonth: (/^\d{4}-\d{2}$/.test(ref) && ref !== date.slice(0,7)) ? ref : null
   };
   if (sb) dbUpsertMovs([state.movements[key]]);
   closeModal('manualmodal'); renderAll();
@@ -1494,7 +1653,7 @@ function exportViewer(){
   const curYM = nowYM();
   const firstMonth = {};
   for (const m of activeMovements()){
-    const ym = m.date.slice(0,7);
+    const ym = movMonth(m);
     if (m.tenantId && (!firstMonth[m.tenantId] || ym<firstMonth[m.tenantId])) firstMonth[m.tenantId] = ym;
   }
   const tenants = Object.values(state.tenants)
@@ -1630,16 +1789,23 @@ function init(){
 
   const dz = $('dropzone'), fi = $('fileinput');
   dz.addEventListener('click', ()=>fi.click());
-  fi.addEventListener('change', ()=>{ if (fi.files[0]) handleFile(fi.files[0]); fi.value=''; });
+  fi.addEventListener('change', ()=>{ if (fi.files.length) handleFiles(fi.files); fi.value=''; });
   dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
   dz.addEventListener('dragleave', ()=>dz.classList.remove('drag'));
   dz.addEventListener('drop', e=>{
     e.preventDefault(); dz.classList.remove('drag');
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   });
 
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click', ()=>switchView(b.dataset.view)));
-  document.querySelectorAll('.modal-bg').forEach(m=>m.addEventListener('click', e=>{ if (e.target===m) m.classList.remove('open'); }));
+  document.querySelectorAll('.modal-bg').forEach(m=>m.addEventListener('click', e=>{
+    if (e.target!==m) return;
+    // chiusura dal fondo: per i modali della coda di import equivale a "salta questo file"
+    if (m.id==='mapmodal'){ cancelMapping(); return; }
+    if (m.id==='triagemodal'){ triageCancel(); return; }
+    if (m.id==='refmodal'){ refConfirm(); return; }
+    m.classList.remove('open');
+  }));
 
 }
 
@@ -1653,7 +1819,8 @@ if (typeof module !== 'undefined' && module.exports){
   module.exports = { parseCSV, detectDelimiter, parseItalianDate, parseItalianAmount,
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
-    viewerTemplate, getState: ()=>state, setState: s=>{ state=s; } };
+    viewerTemplate, movMonth, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature,
+    getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
 </body>
