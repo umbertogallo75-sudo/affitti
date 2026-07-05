@@ -1,0 +1,1660 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#141415">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<title>Gallo Holding — Affitti</title>
+<style>
+:root{
+  /* Palette Gallo Holding (estratta da galloholding.it): Inter, quasi-nero #272525,
+     fondo caldo #F6F4F4, sezioni scure #141415, accento indaco #4950BC, lavanda #DADBF1 */
+  --bg:#F6F4F4; --card:#ffffff; --ink:#272525; --muted:#6E6E73;
+  --accent:#4950BC; --accent-dark:#383FA3; --dark:#141415; --lav:#DADBF1;
+  --ok:#dcf5e3; --ok-ink:#146c2e; --warn:#fdf0d3; --warn-ink:#92600a;
+  --bad:#fde3e3; --bad-ink:#a12626; --na:#ECEBEE; --na-ink:#9A9AA3;
+  --border:#E5E3E4; --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.45}
+h2{font-weight:800;letter-spacing:-.01em}
+header{background:var(--dark);padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;position:sticky;top:0;z-index:50}
+header h1{font-size:1.02rem;display:flex;align-items:baseline;gap:8px;color:#fff;font-weight:800;letter-spacing:.08em}
+header h1 small{color:#9A9AA3;font-weight:500;letter-spacing:.02em;font-size:.78rem}
+.privacy{font-size:.7rem;background:#2A2A2E;color:var(--lav);padding:4px 10px;border-radius:999px;font-weight:500;display:inline-flex;align-items:center;gap:5px}
+nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+nav button{background:none;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:.88rem;color:#9A9AA3;font-weight:500}
+nav button.active{background:#2A2A2E;color:#fff;font-weight:600}
+#loginscreen{position:fixed;inset:0;background:var(--dark);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
+.logincard{background:var(--card);border-radius:14px;padding:34px 30px;max-width:390px;width:100%}
+.loginbrand{font-weight:800;font-size:1.35rem;letter-spacing:.1em;color:var(--ink)}
+.loginbrand small{display:block;letter-spacing:.04em;font-size:.8rem;color:var(--muted);font-weight:500;margin-top:4px}
+.loginbar{height:4px;width:58px;background:var(--accent);margin:16px 0 6px;border-radius:2px}
+.loginerr{color:var(--bad-ink);font-size:.82rem;min-height:1.2em;margin-top:10px}
+main{max-width:1100px;margin:0 auto;padding:18px 14px 90px}
+.btn{background:var(--accent);color:#fff;border:none;padding:10px 18px;border-radius:9px;font-size:.92rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{background:var(--accent-dark)}
+.btn.secondary{background:#eef1f5;color:var(--ink)}
+.btn.small{padding:6px 12px;font-size:.8rem}
+.btn.danger{background:var(--bad);color:var(--bad-ink)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+.dropzone{border:2px dashed #b9c6d8;border-radius:var(--radius);padding:44px 20px;text-align:center;background:var(--card);cursor:pointer;transition:.15s}
+.dropzone.drag{border-color:var(--accent);background:#f0f5ff}
+.dropzone p{color:var(--muted);margin-top:6px;font-size:.88rem}
+.dropzone .big{font-size:2.2rem}
+h2{font-size:1.05rem;margin-bottom:12px}
+h3{font-size:.95rem;margin-bottom:8px}
+.muted{color:var(--muted);font-size:.85rem}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:var(--radius);background:var(--card)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.85rem}
+th,td{padding:9px 11px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center}
+th{background:#f8fafc;font-weight:600;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
+.gridtable th:first-child,.gridtable td:first-child{position:sticky;left:0;background:var(--card);text-align:left;font-weight:600;z-index:2;border-right:1px solid var(--border);max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.gridtable th:first-child{background:#f8fafc;z-index:3}
+.cell{border-radius:7px;padding:5px 8px;display:inline-block;min-width:74px;font-weight:600;cursor:pointer;font-size:.8rem}
+.cell.ok{background:var(--ok);color:var(--ok-ink)}
+.cell.warn{background:var(--warn);color:var(--warn-ink)}
+.cell.bad{background:var(--bad);color:var(--bad-ink)}
+.cell.na{background:var(--na);color:var(--na-ink);cursor:default;font-weight:400}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin:10px 2px;font-size:.78rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.dot{width:12px;height:12px;border-radius:4px;display:inline-block}
+.tenantgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.tcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;transition:.12s}
+.tcard:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(37,99,235,.08)}
+.tcard h3{display:flex;justify-content:space-between;align-items:center}
+.tcard .exp{font-size:.78rem;color:var(--muted);margin:3px 0 8px}
+.badge{font-size:.68rem;padding:3px 8px;border-radius:999px;font-weight:600}
+.badge.ok{background:var(--ok);color:var(--ok-ink)}
+.badge.bad{background:var(--bad);color:var(--bad-ink)}
+.badge.warn{background:var(--warn);color:var(--warn-ink)}
+.badge.na{background:var(--na);color:var(--na-ink)}
+.mrow{display:flex;justify-content:space-between;padding:7px 2px;border-bottom:1px solid var(--border);font-size:.85rem;gap:8px;align-items:center}
+.mrow:last-child{border-bottom:none}
+.modal-bg{position:fixed;inset:0;background:rgba(15,25,40,.45);display:none;align-items:flex-start;justify-content:center;z-index:100;padding:20px 10px;overflow-y:auto}
+.modal-bg.open{display:flex}
+.modal{background:var(--card);border-radius:14px;padding:20px;width:100%;max-width:640px;margin:auto 0}
+.modal h2{display:flex;justify-content:space-between;align-items:center}
+.modal .close{background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--muted);line-height:1}
+label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin:12px 0 4px}
+input[type=text],input[type=number],select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:.9rem;background:#fff;color:var(--ink)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:#eef1f5;border-radius:999px;padding:4px 11px;font-size:.75rem;color:var(--ink)}
+.maptable{font-size:.75rem}
+.maptable td,.maptable th{padding:5px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.mapselects{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:14px 0}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c2733;color:#fff;padding:12px 20px;border-radius:10px;font-size:.88rem;z-index:200;box-shadow:0 6px 20px rgba(0,0,0,.25);opacity:0;transition:.25s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+footer{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);padding:8px 14px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;z-index:40}
+footer button{font-size:.75rem;background:none;border:none;color:var(--muted);cursor:pointer;padding:5px 9px;border-radius:6px}
+footer button:hover{background:var(--bg);color:var(--ink)}
+.empty{text-align:center;padding:30px;color:var(--muted)}
+.searchbar{margin-bottom:12px}
+.amount{font-variant-numeric:tabular-nums;font-weight:600}
+.pos{color:var(--ok-ink)}
+.actionsrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.badge.man{background:#e8e5fb;color:#5b47c9}
+.delbtn{background:none;border:none;cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:6px}
+.delbtn:hover{background:var(--bad)}
+.monthchips{display:flex;overflow-x:auto;gap:6px;padding:4px 0;-webkit-overflow-scrolling:touch}
+.chipmese{flex-shrink:0;min-width:56px;text-align:center;border-radius:8px;padding:6px 4px;font-size:.68rem;line-height:1.3;cursor:pointer}
+.chipmese b{font-size:.75rem}
+.chipmese.ok{background:var(--ok);color:var(--ok-ink)}
+.chipmese.warn{background:var(--warn);color:var(--warn-ink)}
+.chipmese.bad{background:var(--bad);color:var(--bad-ink)}
+.chipmese.na{background:var(--na);color:var(--na-ink);cursor:default}
+.mcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px}
+.mcard h3{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.92rem}
+@media(min-width:641px){ .only-mobile{display:none} }
+@media(max-width:640px){
+  .only-desktop{display:none}
+  header{padding:10px 12px}
+  header h1{font-size:1rem}
+  nav{width:100%;justify-content:space-between;margin-left:0}
+  nav button{padding:9px 8px;font-size:.82rem}
+  .row2{grid-template-columns:1fr}
+  main{padding:12px 8px 104px}
+  .btn{padding:12px 16px}
+  .btn.small{padding:9px 12px}
+  input[type=text],input[type=number],input[type=date],select{padding:12px 11px;font-size:16px} /* 16px evita lo zoom automatico di iOS */
+  .toolbar select,.toolbar input{flex:1 1 45%}
+  .modal{padding:16px}
+  .mrow{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<div id="loginscreen">
+  <div class="logincard">
+    <div class="loginbrand">GALLO HOLDING<small>Gestione affitti — accesso riservato</small></div>
+    <div class="loginbar"></div>
+    <label>Email</label>
+    <input type="email" id="login-email" autocomplete="username" placeholder="nome@esempio.it">
+    <label>Password</label>
+    <input type="password" id="login-pw" autocomplete="current-password">
+    <div class="loginerr" id="login-err"></div>
+    <button class="btn" id="login-btn" style="width:100%;margin-top:8px;justify-content:center" onclick="doLogin()">Accedi</button>
+    <p class="muted" style="margin-top:14px;font-size:.75rem">I dati sono protetti: accesso consentito solo agli utenti autorizzati. L'estratto conto viene letto sul tuo dispositivo; sul server vengono salvati solo i movimenti in entrata.</p>
+  </div>
+</div>
+
+<header>
+  <h1>GALLO HOLDING <small>· Affitti</small></h1>
+  <span class="privacy">🔒 accesso riservato</span>
+  <nav>
+    <button data-view="panoramica" class="active">Panoramica</button>
+    <button data-view="inquilini">Inquilini</button>
+    <button data-view="movimenti">Movimenti</button>
+    <button data-view="importa" style="color:#B7BBEF;font-weight:700">+ Importa</button>
+  </nav>
+</header>
+
+<main>
+  <div id="view-panoramica"></div>
+  <div id="view-inquilini" style="display:none"></div>
+  <div id="view-movimenti" style="display:none"></div>
+  <div id="view-importa" style="display:none">
+    <div class="card">
+      <h2>Importa estratto conto</h2>
+      <p class="muted" style="margin-bottom:14px">Esporta l'estratto conto dal tuo home banking in formato <b>CSV o Excel</b> e caricalo qui. L'elaborazione avviene interamente nel tuo browser: <b>nessun dato viene inviato a server esterni</b>. Puoi caricare più estratti nel tempo: i movimenti già importati vengono riconosciuti e non duplicati.</p>
+      <div class="dropzone" id="dropzone">
+        <div class="big">📄</div>
+        <b>Trascina qui il file, oppure clicca per sceglierlo</b>
+        <p>Formati supportati: .csv, .txt, .xlsx, .xls — separatore ; o , date gg/mm/aaaa, importi con virgola</p>
+      </div>
+      <input type="file" id="fileinput" accept=".csv,.txt,.xlsx,.xls" style="display:none">
+    </div>
+  </div>
+</main>
+
+<footer>
+  <button onclick="exportViewer()">📤 Condividi sola lettura</button>
+  <button onclick="exportBackup()">💾 Esporta backup dati</button>
+  <button onclick="resetAll()">🗑️ Azzera tutti i dati</button>
+  <button onclick="doLogout()">🚪 Esci</button>
+</footer>
+
+<!-- Modal mappatura colonne -->
+<div class="modal-bg" id="mapmodal">
+  <div class="modal" style="max-width:760px">
+    <h2>Verifica le colonne <button class="close" onclick="closeModal('mapmodal')">×</button></h2>
+    <p class="muted" id="mapinfo" style="margin-top:6px"></p>
+    <div style="background:#f0f5ff;border:1px solid #c7d8f7;border-radius:9px;padding:10px 14px;margin-top:12px">
+      <label style="margin-top:0">A quale proprietario / conto appartiene questo estratto?</label>
+      <select id="map-owner"></select>
+    </div>
+    <div class="mapselects">
+      <div><label>Data *</label><select id="map-date"></select></div>
+      <div><label>Importo (unica colonna)</label><select id="map-amount"></select></div>
+      <div><label>Entrate / Avere (se separata)</label><select id="map-in"></select></div>
+      <div><label>Uscite / Dare (se separata)</label><select id="map-out"></select></div>
+      <div><label>Descrizione / Causale</label><select id="map-desc"></select></div>
+      <div><label>Ordinante / Beneficiario</label><select id="map-cp"></select></div>
+    </div>
+    <p class="muted">Anteprima delle prime righe del file:</p>
+    <div class="tablewrap" style="margin-top:8px"><table class="maptable" id="maptable"></table></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" onclick="closeModal('mapmodal')">Annulla</button>
+      <button class="btn" onclick="confirmImport()">Importa i movimenti in entrata</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal pagamento manuale -->
+<div class="modal-bg" id="manualmodal">
+  <div class="modal" style="max-width:460px">
+    <h2>💶 Pagamento manuale <button class="close" onclick="closeModal('manualmodal')">×</button></h2>
+    <p class="muted" style="margin-top:6px">Per affitti pagati in contanti o fuori dal conto. Entra nel conteggio del mese come un bonifico, ma resta marcato come "manuale" ed è eliminabile.</p>
+    <label>Inquilino</label>
+    <input type="text" id="mm-search" placeholder="🔍 Cerca per nome…" oninput="fillManualTenants(this.value)">
+    <select id="mm-tenant" size="5" style="margin-top:6px;height:auto" onchange="manualTenantPicked()"></select>
+    <div class="row2">
+      <div><label>Importo (€)</label><input type="number" id="mm-amount" min="0" step="10" inputmode="decimal"></div>
+      <div><label>Data</label><input type="date" id="mm-date"></div>
+    </div>
+    <label>Nota (opzionale)</label>
+    <input type="text" id="mm-note" placeholder="es. contanti, assegno…">
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" onclick="closeModal('manualmodal')">Annulla</button>
+      <button class="btn" onclick="saveManual()">Registra pagamento</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal triage nuovi ordinanti -->
+<div class="modal-bg" id="triagemodal">
+  <div class="modal" style="max-width:560px">
+    <h2>Nuovi ordinanti trovati (<span id="triage-count"></span>)</h2>
+    <p class="muted" style="margin-top:6px">Per ogni ordinante mai visto prima, indica se è un inquilino. Se scegli "No, ignora", i suoi bonifici futuri verranno accantonati automaticamente senza chiedertelo di nuovo (scelta reversibile dalla sezione Inquilini).</p>
+    <div id="triage-body" style="margin-top:12px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 12px"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" onclick="triageCancel()">Annulla import</button>
+      <button class="btn" onclick="triageConfirm()">Conferma e importa</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal scheda inquilino -->
+<div class="modal-bg" id="tenantmodal">
+  <div class="modal">
+    <h2 id="tm-title">Scheda inquilino <button class="close" onclick="closeModal('tenantmodal')">×</button></h2>
+    <div class="row2">
+      <div><label>Nome inquilino</label><input type="text" id="tm-name"></div>
+      <div><label>Affitto mensile atteso (€)</label><input type="number" id="tm-expected" min="0" step="10" placeholder="es. 750"></div>
+    </div>
+    <div class="row2">
+      <div><label>Proprietario</label><select id="tm-owner"></select></div>
+      <div><label>Stato</label><button class="btn secondary small" id="tm-ceased" style="margin-top:2px;width:100%"></button></div>
+    </div>
+    <label>Nomi ordinante associati a questa scheda</label>
+    <div class="chips" id="tm-aliases"></div>
+    <p class="muted" style="margin-top:6px">I bonifici ricevuti da questi nomi vengono attribuiti automaticamente a questo inquilino. Per associare un altro ordinante, vai in <b>Movimenti</b> e usa il menu "Assegna a…".</p>
+    <label>Riepilogo mensile</label>
+    <div id="tm-months" class="tablewrap" style="max-height:220px;overflow-y:auto"></div>
+    <label>Movimenti (<span id="tm-count"></span>)</label>
+    <div id="tm-movs" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 10px"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap">
+      <button class="btn danger small" id="tm-hide"></button>
+      <div style="display:flex;gap:10px">
+        <button class="btn secondary" onclick="closeModal('tenantmodal')">Annulla</button>
+        <button class="btn" onclick="saveTenant()">Salva</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal dettaglio cella -->
+<div class="modal-bg" id="cellmodal">
+  <div class="modal" style="max-width:480px">
+    <h2 id="cm-title">Dettaglio <button class="close" onclick="closeModal('cellmodal')">×</button></h2>
+    <div id="cm-body" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   AffittiCheck — tutto client-side, dati in localStorage
+   ========================================================= */
+'use strict';
+
+const MESI = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+
+/* ---- Backend Supabase (dati condivisi tra gli utenti autorizzati) ---- */
+const SUPABASE_URL  = 'https://jhtuuyeujeejbhmnyiop.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpodHV1eWV1amVlamJobW55aW9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNjk5NDAsImV4cCI6MjA5ODg0NTk0MH0.bDggkHYeisYbdeiWbx5MlRXmoJ8DNKGHkSlw-McQz0M';
+let sb = null;          // client Supabase
+let appStarted = false;
+
+let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, nextId: 1 };
+/* filtri correnti della panoramica/inquilini */
+let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi' };
+
+function newId(prefix){
+  return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
+}
+
+/* ---------------- Utility di parsing (pure, testabili) ---------------- */
+
+function pad2(n){ return String(n).padStart(2,'0'); }
+
+function normName(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function titleCase(s){
+  return String(s||'').toLowerCase().replace(/(^|[\s'])\S/g, c=>c.toUpperCase());
+}
+
+function parseItalianDate(s){
+  if (s instanceof Date && !isNaN(s)) return s.getFullYear()+'-'+pad2(s.getMonth()+1)+'-'+pad2(s.getDate());
+  s = String(s==null?'':s).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/);
+  if (m){
+    let d=+m[1], mo=+m[2], y=m[3];
+    y = y.length===2 ? +('20'+y) : +y;
+    if (mo>12 && d<=12){ const t=d; d=mo; mo=t; } // formato americano rilevato
+    if (mo>=1 && mo<=12 && d>=1 && d<=31 && y>1970 && y<2100) return y+'-'+pad2(mo)+'-'+pad2(d);
+    return null;
+  }
+  m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/);
+  if (m){
+    const y=+m[1], mo=+m[2], d=+m[3];
+    if (mo>=1 && mo<=12 && d>=1 && d<=31) return y+'-'+pad2(mo)+'-'+pad2(d);
+    return null;
+  }
+  // numero seriale Excel
+  if (/^\d{4,6}$/.test(s)){
+    const dt = new Date(Date.UTC(1899,11,30) + (+s)*86400000);
+    const y = dt.getUTCFullYear();
+    if (y>1990 && y<2100) return y+'-'+pad2(dt.getUTCMonth()+1)+'-'+pad2(dt.getUTCDate());
+  }
+  return null;
+}
+
+function parseItalianAmount(v){
+  if (typeof v === 'number') return isNaN(v) ? null : v;
+  let s = String(v==null?'':v).trim();
+  if (!s) return null;
+  let neg = false;
+  if (/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1,-1); }
+  s = s.replace(/EUR/ig,'').replace(/[€\s ]/g,'');
+  if (s.startsWith('+')) s = s.slice(1);
+  if (s.startsWith('-')){ neg = true; s = s.slice(1); }
+  if (!/^[\d.,]+$/.test(s)) return null;
+  const lc = s.lastIndexOf(','), lp = s.lastIndexOf('.');
+  if (lc>-1 && lp>-1){
+    if (lc>lp) s = s.replace(/\./g,'').replace(',','.');   // 1.234,56
+    else       s = s.replace(/,/g,'');                     // 1,234.56
+  } else if (lc>-1){
+    const dec = s.length-lc-1;
+    s = (dec>=1 && dec<=2) ? s.replace(',','.') : s.replace(/,/g,'');
+  } else if (lp>-1){
+    const dec = s.length-lp-1;
+    if (dec===3 && /^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g,''); // 1.234 = migliaia
+  }
+  const n = parseFloat(s);
+  if (isNaN(n)) return null;
+  return neg ? -n : n;
+}
+
+/* CSV parser (rispetta le virgolette) */
+function detectDelimiter(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim()).slice(0,12);
+  const cands = [';', ',', '\t', '|'];
+  let best = ';', bestScore = -1;
+  for (const d of cands){
+    const counts = lines.map(l=>{
+      let c=0, q=false;
+      for (const ch of l){
+        if (ch==='"') q=!q;
+        else if (ch===d && !q) c++;
+      }
+      return c;
+    });
+    const nz = counts.filter(c=>c>0);
+    if (!nz.length) continue;
+    const avg = nz.reduce((a,b)=>a+b,0)/nz.length;
+    const consistent = nz.every(c=>c===nz[0]) && nz.length===counts.length;
+    const score = avg + (consistent?3:0);
+    if (score>bestScore){ bestScore=score; best=d; }
+  }
+  return best;
+}
+
+function parseCSV(text){
+  text = text.replace(/^﻿/,'');
+  const delim = detectDelimiter(text);
+  const rows = []; let row = [], field = '', q = false;
+  for (let i=0;i<text.length;i++){
+    const ch = text[i];
+    if (q){
+      if (ch==='"'){
+        if (text[i+1]==='"'){ field+='"'; i++; } else q=false;
+      } else field += ch;
+    } else {
+      if (ch==='"') q = true;
+      else if (ch===delim){ row.push(field); field=''; }
+      else if (ch==='\n' || ch==='\r'){
+        if (ch==='\r' && text[i+1]==='\n') i++;
+        row.push(field); field='';
+        if (row.some(f=>f.trim()!=='')) rows.push(row);
+        row = [];
+      } else field += ch;
+    }
+  }
+  row.push(field);
+  if (row.some(f=>f.trim()!=='')) rows.push(row);
+  return { rows, delim };
+}
+
+/* Riconoscimento automatico intestazioni e colonne */
+/* Intestazioni tipiche delle banche italiane.
+   Testato sui formati di export di Banca Sella (CSV/XLSX: Data contabile, Data valuta,
+   Causale, Descrizione, Importo, Divisa) e Intesa Sanpaolo (XLSX con righe di preambolo
+   e colonne tipo Data, Operazione, Dettagli, Categoria, Valuta, Importo).
+   descHigh = campo descrittivo ricco (Descrizione/Dettagli), preferito rispetto a
+   descLow (Causale/Operazione, spesso solo un'etichetta breve). */
+const HEADER_KEYWORDS = {
+  date:    [/^data\b/, /data\s*contab/, /data\s*operaz/, /data\s*mov/, /^date$/],
+  dateLow: [/valuta/],
+  descTop: [/descrizione\s*estesa/, /dettagl/],
+  descHigh:[/descriz/, /dettagl/],
+  descLow: [/causale/, /operazion/, /movimento/, /description/],
+  desc:    [/descriz/, /dettagl/, /causale/, /operazion/, /movimento/, /description/],
+  amount:  [/^importo/, /importo\s*\(?eur/, /^amount$/, /ammontare/],
+  inflow:  [/entrat/, /accredit/, /^avere$/, /credit/],
+  outflow: [/uscit/, /addebit/, /^dare$/, /debit/],
+  cp:      [/ordinante/, /beneficiar/, /contropart/, /^nome\b/, /pagatore/]
+};
+
+function scoreHeaderRow(cells){
+  let s = 0;
+  for (const c of cells){
+    const t = String(c||'').toLowerCase().trim();
+    if (!t) continue;
+    for (const group of Object.values(HEADER_KEYWORDS))
+      if (group.some(rx=>rx.test(t))) { s++; break; }
+  }
+  return s;
+}
+
+function findHeaderRow(rows){
+  let bestIdx = -1, bestScore = 1; // richiede almeno 2 keyword
+  // gli XLSX di Intesa Sanpaolo hanno preamboli lunghi (saldo, filtri, intestatario):
+  // la riga di intestazione può stare anche oltre la 20ª riga
+  const lim = Math.min(rows.length, 40);
+  for (let i=0;i<lim;i++){
+    const sc = scoreHeaderRow(rows[i]);
+    if (sc>bestScore){ bestScore=sc; bestIdx=i; }
+  }
+  return bestIdx; // -1 = nessuna intestazione riconosciuta
+}
+
+function matchHeader(text, group){
+  const t = String(text||'').toLowerCase().trim();
+  return HEADER_KEYWORDS[group].some(rx=>rx.test(t));
+}
+
+function autoDetectColumns(rows, headerIdx){
+  const map = { date:-1, amount:-1, inflow:-1, outflow:-1, desc:-1, cp:-1 };
+  const header = headerIdx>=0 ? rows[headerIdx] : null;
+  const dataRows = rows.slice(headerIdx+1, headerIdx+1+30);
+  const nCols = Math.max(...rows.slice(0, headerIdx+5<rows.length?headerIdx+5:rows.length).map(r=>r.length), 0);
+
+  if (header){
+    header.forEach((h,i)=>{
+      if (map.date<0    && matchHeader(h,'date'))    map.date=i;
+      if (map.inflow<0  && matchHeader(h,'inflow'))  map.inflow=i;
+      if (map.outflow<0 && matchHeader(h,'outflow')) map.outflow=i;
+      if (map.amount<0  && matchHeader(h,'amount'))  map.amount=i;
+      if (map.desc<0    && matchHeader(h,'descTop')) map.desc=i;
+      if (map.cp<0      && matchHeader(h,'cp'))      map.cp=i;
+    });
+    // passate successive: "Descrizione estesa"/"Dettagli" (Intesa) > "Descrizione" > Causale/Operazione
+    if (map.desc<0) header.forEach((h,i)=>{ if (map.desc<0 && matchHeader(h,'descHigh')) map.desc=i; });
+    if (map.desc<0) header.forEach((h,i)=>{ if (map.desc<0 && matchHeader(h,'descLow')) map.desc=i; });
+    if (map.date<0) header.forEach((h,i)=>{ if (map.date<0 && matchHeader(h,'dateLow')) map.date=i; });
+  }
+  // fallback sui contenuti
+  const colStats = [];
+  for (let c=0;c<nCols;c++){
+    let dates=0, amounts=0, texts=0, n=0;
+    for (const r of dataRows){
+      const v = r[c]; if (v==null || String(v).trim()==='') continue;
+      n++;
+      if (parseItalianDate(v)) dates++;
+      else if (parseItalianAmount(v)!==null) amounts++;
+      else texts++;
+    }
+    colStats.push({dates:n?dates/n:0, amounts:n?amounts/n:0, texts:n?texts/n:0, n});
+  }
+  if (map.date<0){
+    let bi=-1,bs=0.6;
+    colStats.forEach((s,i)=>{ if (s.dates>bs){bs=s.dates;bi=i;} });
+    map.date = bi;
+  }
+  if (map.amount<0 && map.inflow<0){
+    let bi=-1,bs=0.6;
+    colStats.forEach((s,i)=>{ if (i!==map.date && s.amounts>bs){bs=s.amounts;bi=i;} });
+    map.amount = bi;
+  }
+  if (map.desc<0){
+    let bi=-1,bs=0.5;
+    colStats.forEach((s,i)=>{ if (i!==map.date && i!==map.amount && i!==map.cp && s.texts>bs){bs=s.texts;bi=i;} });
+    map.desc = bi;
+  }
+  return map;
+}
+
+/* Estrazione dell'ordinante dalla descrizione/dettagli, se manca la colonna dedicata.
+   Copre le diciture di Banca Sella e Intesa Sanpaolo:
+   "ORDINANTE: ROSSI MARIO CAUSALE: ..." / "BONIFICO A VOSTRO FAVORE DA ROSSI MARIO PER ..."
+   / "BONIFICO ISTANTANEO DISPOSTO DA ROSSI MARIO ..." */
+const CP_STOP = 'CAUSALE|PER|RIF|BIC|IBAN|NOTE|INFO|DATA|CRO|TRN|BENEF|BENEFICIARIO|CONTO|ADDEBITO|ACCREDITO|COMMISSIONI|EUR|IMPORTO|PRESSO|COD|ANAGRAFICA|ABI|CAB';
+function extractCounterparty(desc){
+  const d = ' ' + normName(desc) + ' ';
+  let m = d.match(new RegExp('\\bORDINANTE\\s+([A-Z][A-Z ]{2,}?)(?=\\s+(?:'+CP_STOP+')\\b|\\s*$)'));
+  if (m) return m[1].trim();
+  m = d.match(new RegExp('\\b(?:BONIFICO|BON|GIROCONTO|ACCREDITO|SEPA)\\b[A-Z ]*?\\bDA\\s+([A-Z][A-Z ]{2,}?)(?=\\s+(?:'+CP_STOP+')\\b|\\s*$)'));
+  if (m) return m[1].trim();
+  // Formato reale Banca Sella (ListaMovimentiConto.xls): la descrizione è la causale
+  // libera con l'ordinante in coda dopo l'ultimo " DA ", es. "FITTO MESE GENNAIO DA NOME COGNOME"
+  const idx = d.lastIndexOf(' DA ');
+  if (idx >= 0){
+    let tail = d.slice(idx+4).replace(/^DI\s+/,'').trim();
+    const words = tail.split(' ').filter(Boolean);
+    if (tail.length>=4 && words.length>=1 && words.length<=6 && !/\d/.test(tail)) return tail;
+  }
+  return null;
+}
+
+/* Confronto flessibile tra nomi (token) */
+function namesCompatible(a, b){
+  if (!a || !b) return false;
+  if (a===b) return true;
+  const ta = a.split(' ').filter(t=>t.length>1);
+  const tb = b.split(' ').filter(t=>t.length>1);
+  if (!ta.length || !tb.length) return false;
+  const [small, big] = ta.length<=tb.length ? [ta,tb] : [tb,ta];
+  if (small.join('').length < 4) return false;
+  return small.every(t => big.some(u => u===t));
+}
+
+function dedupKey(dateISO, amount, cpNorm){
+  return dateISO + '|' + Math.round(amount*100) + '|' + cpNorm;
+}
+
+/* ---------------- Persistenza su Supabase ----------------
+   Lo stato in memoria resta la fonte per il rendering; ogni mutazione viene
+   propagata al database. Il canale Realtime ricarica lo stato quando un altro
+   utente modifica i dati. */
+
+function saveState(){ /* la persistenza avviene con scritture mirate per ogni operazione */ }
+
+function dbErr(r){
+  if (r && r.error) showToast('⚠️ Salvataggio online non riuscito: ' + r.error.message + ' — ricarica la pagina.');
+  return r;
+}
+const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:m.desc||'',
+  ordinante:m.cp||'', ordinante_norm:m.cpNorm||'', inquilino_id:m.tenantId||null,
+  proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual });
+const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
+  proprietario_id:t.ownerId||null, alias:t.aliases||[] });
+
+const dbUpsertOwner    = o    => sb.from('proprietari').upsert({id:o.id, nome:o.name}).then(dbErr);
+const dbUpsertTenants  = arr  => arr.length ? sb.from('inquilini').upsert(arr.map(tenRow)).then(dbErr) : Promise.resolve();
+const dbDeleteTenant   = id   => sb.from('inquilini').delete().eq('id', id).then(dbErr);
+const dbUpsertMovs     = arr  => arr.length ? sb.from('movimenti').upsert(arr.map(movRow)).then(dbErr) : Promise.resolve();
+const dbDeleteMov      = key  => sb.from('movimenti').delete().eq('chiave', key).then(dbErr);
+const dbUpsertIgnored  = g    => sb.from('ordinanti_ignorati').upsert({ordinante_norm:g.cpNorm, nome:g.name||''}).then(dbErr);
+const dbDeleteIgnored  = norm => sb.from('ordinanti_ignorati').delete().eq('ordinante_norm', norm).then(dbErr);
+
+async function loadAll(){
+  const [p,i,m,g] = await Promise.all([
+    sb.from('proprietari').select('*'),
+    sb.from('inquilini').select('*'),
+    sb.from('movimenti').select('*'),
+    sb.from('ordinanti_ignorati').select('*')
+  ]);
+  for (const r of [p,i,m,g]) if (r.error) throw r.error;
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, nextId:1 };
+  p.data.forEach(r => state.owners[r.id] = { id:r.id, name:r.nome });
+  i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
+    ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], hidden:false });
+  m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
+    desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
+    ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale });
+  g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
+}
+
+let rtTimer = null;
+function subscribeRealtime(){
+  sb.channel('affitti-sync')
+    .on('postgres_changes', { event:'*', schema:'public' }, ()=>{
+      clearTimeout(rtTimer);
+      rtTimer = setTimeout(async ()=>{
+        try { await loadAll(); renderAll(); } catch(e){ /* offline temporaneo */ }
+      }, 400);
+    })
+    .subscribe();
+}
+
+/* ---------------- Login ---------------- */
+
+async function doLogin(){
+  const email = $('login-email').value.trim();
+  const pw = $('login-pw').value;
+  if (!email || !pw){ $('login-err').textContent = 'Inserisci email e password.'; return; }
+  const btn = $('login-btn');
+  btn.disabled = true; btn.textContent = 'Accesso in corso…';
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  btn.disabled = false; btn.textContent = 'Accedi';
+  if (error){
+    $('login-err').textContent = /invalid login credentials/i.test(error.message)
+      ? 'Email o password errati.' : 'Errore: ' + error.message;
+  }
+}
+
+async function doLogout(){
+  if (!confirm('Uscire dall\'app?')) return;
+  await sb.auth.signOut();
+  location.reload();
+}
+
+async function startApp(){
+  try {
+    await loadAll();
+  } catch(e){
+    $('login-err').textContent = 'Impossibile caricare i dati: ' + e.message;
+    $('loginscreen').style.display = 'flex';
+    return;
+  }
+  $('loginscreen').style.display = 'none';
+  renderAll();
+  subscribeRealtime();
+}
+
+/* ---------------- Logica inquilini ---------------- */
+
+function findTenantFor(cpNorm){
+  const matches = [];
+  for (const t of Object.values(state.tenants)){
+    if (t.aliases.includes(cpNorm)) return t;           // corrispondenza esatta
+  }
+  for (const t of Object.values(state.tenants)){
+    if (t.aliases.some(a=>namesCompatible(a, cpNorm))) matches.push(t);
+  }
+  return matches.length===1 ? matches[0] : null;        // se ambiguo, meglio non indovinare
+}
+
+function createTenant(cpNorm, displayName, ownerId){
+  const id = newId('t-');
+  state.tenants[id] = { id, name: titleCase(displayName || cpNorm), expected: null, aliases: [cpNorm], hidden: false, ceased: false, ownerId: ownerId || null };
+  return state.tenants[id];
+}
+
+function createOwner(name){
+  const id = newId('o-');
+  state.owners[id] = { id, name: name.trim() };
+  if (sb) dbUpsertOwner(state.owners[id]);
+  return state.owners[id];
+}
+
+/* ---- ordinanti ignorati (non-inquilini) ---- */
+
+function activeMovements(){
+  return Object.values(state.movements).filter(m=>!m.ignored);
+}
+
+function findIgnoredFor(cpNorm){
+  if (state.ignored[cpNorm]) return state.ignored[cpNorm];
+  const matches = Object.values(state.ignored).filter(g=>namesCompatible(g.cpNorm, cpNorm));
+  return matches.length===1 ? matches[0] : null;
+}
+
+/* Un ordinante è "nuovo" se non corrisponde né a un inquilino né a un ignorato */
+function classifyCp(cpNorm){
+  if (findTenantFor(cpNorm)) return 'tenant';
+  if (findIgnoredFor(cpNorm)) return 'ignored';
+  return 'new';
+}
+
+function ignoreTenantInternal(tenantId){
+  const t = state.tenants[tenantId];
+  if (!t) return 0;
+  const entries = [];
+  for (const a of t.aliases){
+    if (!state.ignored[a]) state.ignored[a] = { cpNorm: a, name: t.name };
+    entries.push(state.ignored[a]);
+  }
+  let n = 0;
+  const changed = [];
+  for (const m of Object.values(state.movements)){
+    if (m.tenantId===tenantId){ m.tenantId = null; m.ignored = true; changed.push(m); n++; }
+  }
+  delete state.tenants[tenantId];
+  if (sb){
+    (async ()=>{
+      for (const g of entries) await dbUpsertIgnored(g);
+      await dbUpsertMovs(changed);
+      await dbDeleteTenant(tenantId);
+    })();
+  }
+  return n;
+}
+
+/* Promozione: da ignorato a inquilino, recuperando i movimenti storici accantonati */
+function promoteIgnoredCore(cpNorm){
+  const entry = state.ignored[cpNorm];
+  if (!entry) return null;
+  const tenant = createTenant(cpNorm, entry.name || cpNorm, null);
+  const removedNorms = [cpNorm];
+  delete state.ignored[cpNorm];
+  // assorbe anche gli alias ignorati compatibili (varianti dello stesso nome)
+  for (const g of Object.values(state.ignored)){
+    if (namesCompatible(g.cpNorm, cpNorm)){
+      if (!tenant.aliases.includes(g.cpNorm)) tenant.aliases.push(g.cpNorm);
+      delete state.ignored[g.cpNorm];
+      removedNorms.push(g.cpNorm);
+    }
+  }
+  let recovered = 0;
+  const changed = [];
+  for (const m of Object.values(state.movements)){
+    if (m.ignored && tenant.aliases.some(a=>a===m.cpNorm || namesCompatible(a, m.cpNorm))){
+      m.ignored = false; m.tenantId = tenant.id;
+      if (!tenant.aliases.includes(m.cpNorm)) tenant.aliases.push(m.cpNorm);
+      if (!tenant.ownerId && m.ownerId) tenant.ownerId = m.ownerId;
+      changed.push(m);
+      recovered++;
+    }
+  }
+  return { tenant, recovered, changed, removedNorms };
+}
+
+function promoteIgnored(cpNorm){
+  const res = promoteIgnoredCore(cpNorm);
+  if (!res) return;
+  if (sb){
+    (async ()=>{
+      await dbUpsertTenants([res.tenant]);
+      await dbUpsertMovs(res.changed);
+      for (const n of res.removedNorms) await dbDeleteIgnored(n);
+    })();
+  }
+  renderAll();
+  showToast(`${res.tenant.name} promosso a inquilino: recuperati ${res.recovered} movimenti storici.`);
+}
+
+function importMovements(list, ownerId){
+  let added = 0, dups = 0, newTenants = 0, ignoredCount = 0;
+  const newMovKeys = [], touchedTenants = new Set();
+  for (const mv of list){
+    const key = dedupKey(mv.date, mv.amount, mv.cpNorm);
+    if (state.movements[key]){ dups++; continue; }
+    // ordinante in lista ignorati: il movimento viene accantonato senza domande
+    // (resta recuperabile se in futuro l'ordinante viene promosso a inquilino)
+    if (!findTenantFor(mv.cpNorm) && findIgnoredFor(mv.cpNorm)){
+      state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: null, ownerId: ownerId || null, ignored: true };
+      newMovKeys.push(key);
+      ignoredCount++;
+      continue;
+    }
+    let tenant = findTenantFor(mv.cpNorm);
+    if (!tenant){ tenant = createTenant(mv.cpNorm, mv.cp, ownerId); newTenants++; }
+    else {
+      if (!tenant.aliases.includes(mv.cpNorm)) tenant.aliases.push(mv.cpNorm);
+      if (!tenant.ownerId && ownerId) tenant.ownerId = ownerId;   // non sovrascrive un'assegnazione esistente
+    }
+    touchedTenants.add(tenant.id);
+    state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: tenant.id, ownerId: ownerId || null, ignored: false };
+    newMovKeys.push(key);
+    added++;
+  }
+  saveState();
+  return { added, dups, newTenants, ignoredCount, newMovKeys, touchedTenants: [...touchedTenants] };
+}
+
+/* Propaga un import al database rispettando le dipendenze (proprietario → inquilini → movimenti) */
+async function persistImport(ownerId, res){
+  if (!sb) return;
+  if (ownerId && state.owners[ownerId]) await dbUpsertOwner(state.owners[ownerId]);
+  await dbUpsertTenants(res.touchedTenants.map(id=>state.tenants[id]).filter(Boolean));
+  await dbUpsertMovs(res.newMovKeys.map(k=>state.movements[k]).filter(Boolean));
+}
+
+/* ---------------- Pipeline di importazione file ---------------- */
+
+let pendingRows = null, pendingHeaderIdx = -1;
+
+function handleFile(file){
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf')){
+    showToast('I PDF non sono supportati: esporta l\'estratto conto in CSV o Excel dall\'home banking.');
+    return;
+  }
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')){
+    loadSheetJS().then(()=>{
+      const reader = new FileReader();
+      reader.onload = e => {
+        try{
+          const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array', cellDates:true});
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
+          startMapping(rows.filter(r=>r.some(c=>String(c).trim()!=='')));
+        }catch(err){ showToast('Impossibile leggere il file Excel: ' + err.message); }
+      };
+      reader.readAsArrayBuffer(file);
+    }).catch(()=> showToast('Per leggere i file Excel serve la connessione internet (libreria caricata al volo). In alternativa esporta in CSV.'));
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const { rows } = parseCSV(e.target.result);
+    if (!rows.length){ showToast('Il file sembra vuoto.'); return; }
+    startMapping(rows);
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function loadSheetJS(){
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((res, rej)=>{
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+function startMapping(rows){
+  pendingRows = rows;
+  pendingHeaderIdx = findHeaderRow(rows);
+  const map = autoDetectColumns(rows, pendingHeaderIdx);
+  const nCols = Math.max(...rows.slice(0,20).map(r=>r.length));
+  const header = pendingHeaderIdx>=0 ? rows[pendingHeaderIdx] : null;
+
+  const colName = i => header && String(header[i]||'').trim() ? String(header[i]).trim() : 'Colonna ' + String.fromCharCode(65+i);
+  const fill = (selId, sel, optionalLabel) => {
+    const el = document.getElementById(selId);
+    el.innerHTML = '<option value="-1">' + optionalLabel + '</option>';
+    for (let i=0;i<nCols;i++){
+      const o = document.createElement('option');
+      o.value = i; o.textContent = colName(i);
+      if (i===sel) o.selected = true;
+      el.appendChild(o);
+    }
+  };
+  fill('map-date',   map.date,   '— seleziona —');
+  fill('map-amount', map.amount, '— non presente —');
+  fill('map-in',     map.inflow, '— non presente —');
+  fill('map-out',    map.outflow,'— non presente —');
+  fill('map-desc',   map.desc,   '— non presente —');
+  fill('map-cp',     map.cp,     '— non presente —');
+
+  // selettore proprietario/conto
+  const ow = document.getElementById('map-owner');
+  ow.innerHTML = '';
+  const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  if (!owners.length) ow.innerHTML = '<option value="">— nessun proprietario definito —</option>';
+  for (const o of owners){
+    const opt = document.createElement('option');
+    opt.value = o.id; opt.textContent = o.name;
+    if (o.id===state.lastOwnerId) opt.selected = true;
+    ow.appendChild(opt);
+  }
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__'; newOpt.textContent = '➕ Nuovo proprietario…';
+  ow.appendChild(newOpt);
+  if (!owners.length) ow.value = '__new__';
+
+  const auto = map.date>=0 && (map.amount>=0 || map.inflow>=0);
+  document.getElementById('mapinfo').textContent = auto
+    ? 'Colonne riconosciute automaticamente. Controlla che siano corrette e conferma. Verranno importati solo i movimenti in entrata (bonifici ricevuti).'
+    : '⚠️ Non sono riuscito a riconoscere tutte le colonne: indicale manualmente qui sotto.';
+
+  // anteprima
+  const tbl = document.getElementById('maptable');
+  tbl.innerHTML = '';
+  const trh = document.createElement('tr');
+  for (let i=0;i<nCols;i++){ const th=document.createElement('th'); th.textContent = colName(i); trh.appendChild(th); }
+  tbl.appendChild(trh);
+  const start = pendingHeaderIdx>=0 ? pendingHeaderIdx+1 : 0;
+  for (const r of rows.slice(start, start+8)){
+    const tr = document.createElement('tr');
+    for (let i=0;i<nCols;i++){ const td=document.createElement('td'); td.textContent = r[i]==null?'':String(r[i]); tr.appendChild(td); }
+    tbl.appendChild(tr);
+  }
+  openModal('mapmodal');
+}
+
+function confirmImport(){
+  const gv = id => parseInt(document.getElementById(id).value, 10);
+  const ci = { date: gv('map-date'), amount: gv('map-amount'), inflow: gv('map-in'), outflow: gv('map-out'), desc: gv('map-desc'), cp: gv('map-cp') };
+  if (ci.date<0){ showToast('Seleziona la colonna della data.'); return; }
+  if (ci.amount<0 && ci.inflow<0){ showToast('Seleziona la colonna dell\'importo (o quella delle entrate).'); return; }
+
+  // proprietario/conto
+  let ownerId = document.getElementById('map-owner').value;
+  if (ownerId==='__new__' || ownerId===''){
+    const name = prompt('Nome del proprietario (es. "Umberto" o "Conto Sella Umberto"):');
+    if (!name || !name.trim()){ showToast('Indica il proprietario a cui appartiene l\'estratto conto.'); return; }
+    ownerId = createOwner(name).id;
+  }
+  state.lastOwnerId = ownerId;
+
+  const start = pendingHeaderIdx>=0 ? pendingHeaderIdx+1 : 0;
+  const list = [];
+  let skipped = 0;
+  for (const r of pendingRows.slice(start)){
+    const date = parseItalianDate(r[ci.date]);
+    if (!date){ skipped++; continue; }
+    let amount = null;
+    if (ci.inflow>=0){
+      const inn = parseItalianAmount(r[ci.inflow]);
+      if (inn!==null && inn>0) amount = inn;
+      else { skipped++; continue; }               // riga di uscita o vuota
+    } else {
+      amount = parseItalianAmount(r[ci.amount]);
+      if (amount===null){ skipped++; continue; }
+      if (amount<=0){ skipped++; continue; }      // solo entrate
+    }
+    const desc = ci.desc>=0 ? String(r[ci.desc]||'').trim() : '';
+    let cp = ci.cp>=0 ? String(r[ci.cp]||'').trim() : '';
+    if (!cp) cp = extractCounterparty(desc) || '';
+    if (!cp){
+      // ultimo tentativo: cerca l'ordinante in tutte le celle testuali della riga
+      const rowText = r.filter(c=>typeof c==='string' && c.length>8).join(' ');
+      cp = extractCounterparty(rowText) || '';
+    }
+    let cpNorm;
+    if (!cp){
+      // nessun ordinante identificabile: si usa la descrizione come raggruppamento,
+      // ma senza cifre (date, codici) per non spezzare lo stesso mittente in più gruppi
+      cp = desc || 'Sconosciuto';
+      cpNorm = normName(cp).replace(/[0-9]+/g,' ').replace(/\s+/g,' ').trim().split(' ').slice(0,6).join(' ');
+    } else {
+      cpNorm = normName(cp);
+    }
+    if (!cpNorm){ skipped++; continue; }
+    list.push({ date, amount, desc, cp, cpNorm });
+  }
+  closeModal('mapmodal');
+  pendingRows = null;
+
+  // Triage: gli ordinanti MAI visti prima richiedono la conferma "È un inquilino?"
+  const newGroups = {};
+  for (const mv of list){
+    if (classifyCp(mv.cpNorm)!=='new') continue;
+    const g = newGroups[mv.cpNorm] = newGroups[mv.cpNorm] || { cpNorm: mv.cpNorm, cp: mv.cp, n:0, tot:0, sample: mv.desc };
+    g.n++; g.tot += mv.amount;
+  }
+  const groups = Object.values(newGroups);
+  if (groups.length){
+    pendingImport = { list, ownerId, skipped };
+    showTriage(groups);
+  } else {
+    finishImport(list, ownerId, skipped);
+  }
+}
+
+let pendingImport = null;
+
+function showTriage(groups){
+  const body = $('triage-body');
+  body.innerHTML = groups.map((g,i)=>`
+    <div class="mrow" style="gap:12px">
+      <div style="min-width:0;flex:1">
+        <b>${escapeHtml(titleCase(g.cp))}</b>
+        <div class="muted" style="font-size:.75rem">${g.n} bonific${g.n===1?'o':'i'} · ${fmtEur(g.tot)}<br>
+        <span style="font-style:italic">«${escapeHtml(g.sample.slice(0,70))}»</span></div>
+      </div>
+      <select id="triage-${i}" data-cpnorm="${escapeHtml(g.cpNorm)}" style="width:auto;flex-shrink:0">
+        <option value="tenant">✅ Sì, è un inquilino</option>
+        <option value="ignore">🚫 No, ignora</option>
+      </select>
+    </div>`).join('');
+  $('triage-count').textContent = groups.length;
+  openModal('triagemodal');
+}
+
+function triageConfirm(){
+  if (!pendingImport) return;
+  document.querySelectorAll('#triage-body select').forEach(sel=>{
+    if (sel.value==='ignore'){
+      const cpNorm = sel.dataset.cpnorm;
+      const g = pendingImport.list.find(m=>m.cpNorm===cpNorm);
+      state.ignored[cpNorm] = { cpNorm, name: titleCase(g ? g.cp : cpNorm) };
+      if (sb) dbUpsertIgnored(state.ignored[cpNorm]);
+    }
+  });
+  closeModal('triagemodal');
+  finishImport(pendingImport.list, pendingImport.ownerId, pendingImport.skipped);
+  pendingImport = null;
+}
+
+function triageCancel(){
+  closeModal('triagemodal');
+  pendingImport = null;
+  showToast('Import annullato: nessun movimento è stato salvato.');
+}
+
+function finishImport(list, ownerId, skipped){
+  const res = importMovements(list, ownerId);
+  persistImport(ownerId, res);
+  renderAll();
+  switchView('panoramica');
+  showToast(`Importati ${res.added} movimenti` +
+    (res.newTenants ? ` · ${res.newTenants} nuovi inquilini` : '') +
+    ` · ${res.dups} duplicati scartati` +
+    (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti ignorati` : '') +
+    (skipped ? ` · ${skipped} righe non in entrata` : '') + '.');
+}
+
+/* ---------------- Rendering ---------------- */
+
+function $(id){ return document.getElementById(id); }
+
+function nowYM(){
+  const d = new Date();
+  return d.getFullYear()+'-'+pad2(d.getMonth()+1);
+}
+
+/* stato del mese corrente: 0=mancante, 1=parziale, 2=pagato */
+function currentMonthStatus(t, sums){
+  const s = sums[t.id]?.[nowYM()] || 0;
+  if (s<=0) return 0;
+  if (t.expected && s < t.expected-0.01) return 1;
+  return 2;
+}
+
+function filteredTenants(sums){
+  const q = normName(ui.q);
+  let list = Object.values(state.tenants).filter(t=>!t.hidden);
+  if (ui.status==='active') list = list.filter(t=>!t.ceased);
+  else if (ui.status==='ceased') list = list.filter(t=>t.ceased);
+  if (ui.owner!=='all') list = list.filter(t=>(t.ownerId||'none')===ui.owner);
+  if (q) list = list.filter(t=> normName(t.name).includes(q) || t.aliases.some(a=>a.includes(q)) );
+  if (ui.sort==='morosi' && sums){
+    list.sort((a,b)=> (a.ceased-b.ceased) || (currentMonthStatus(a,sums)-currentMonthStatus(b,sums)) || a.name.localeCompare(b.name,'it'));
+  } else {
+    list.sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  }
+  return list;
+}
+
+function ownerName(id){ return state.owners[id]?.name || null; }
+
+function toolbarHtml(){
+  const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  const ownerOpts = ['<option value="all">Tutti i proprietari</option>']
+    .concat(owners.map(o=>`<option value="${o.id}" ${ui.owner===o.id?'selected':''}>${escapeHtml(o.name)}</option>`))
+    .concat(Object.values(state.tenants).some(t=>!t.ownerId&&!t.hidden) ? [`<option value="none" ${ui.owner==='none'?'selected':''}>Senza proprietario</option>`] : [])
+    .join('');
+  return `<div class="card toolbar" style="padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="text" value="${escapeHtml(ui.q)}" placeholder="🔍 Cerca inquilino…" style="flex:1;min-width:150px;max-width:260px" oninput="setUI('q',this.value)">
+    <select style="width:auto" onchange="setUI('owner',this.value)">${ownerOpts}</select>
+    <select style="width:auto" onchange="setUI('status',this.value)">
+      <option value="active" ${ui.status==='active'?'selected':''}>Attivi</option>
+      <option value="ceased" ${ui.status==='ceased'?'selected':''}>Cessati</option>
+      <option value="all" ${ui.status==='all'?'selected':''}>Tutti</option>
+    </select>
+    <select style="width:auto" onchange="setUI('sort',this.value)">
+      <option value="morosi" ${ui.sort==='morosi'?'selected':''}>Prima i morosi</option>
+      <option value="nome" ${ui.sort==='nome'?'selected':''}>Nome A→Z</option>
+    </select>
+  </div>`;
+}
+
+function setUI(k,v){
+  ui[k]=v;
+  const focusSearch = k==='q';
+  renderPanoramica(); renderInquilini();
+  if (focusSearch){
+    const el = document.querySelector('#view-panoramica .toolbar input') || document.querySelector('#view-inquilini .toolbar input');
+    const vis = document.querySelector('#view-inquilini').style.display==='' ? document.querySelector('#view-inquilini .toolbar input') : document.querySelector('#view-panoramica .toolbar input');
+    const t = vis || el;
+    if (t){ t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+  }
+}
+
+function monthsRange(){
+  const set = new Set();
+  for (const m of activeMovements()) set.add(m.date.slice(0,7));
+  if (!set.size) return [];
+  const arr = [...set].sort();
+  const out = [];
+  let [y,mo] = arr[0].split('-').map(Number);
+  const [ey,emo] = arr[arr.length-1].split('-').map(Number);
+  while (y<ey || (y===ey && mo<=emo)){
+    out.push(y+'-'+pad2(mo));
+    mo++; if (mo>12){ mo=1; y++; }
+  }
+  return out;
+}
+
+function monthLabel(ym){
+  const [y,m] = ym.split('-');
+  return MESI[+m-1] + ' ' + y.slice(2);
+}
+
+function sumsByTenantMonth(){
+  const sums = {};
+  for (const m of activeMovements()){
+    const ym = m.date.slice(0,7);
+    (sums[m.tenantId] = sums[m.tenantId] || {})[ym] = (sums[m.tenantId]?.[ym] || 0) + m.amount;
+  }
+  return sums;
+}
+
+function fmtEur(n){
+  return n.toLocaleString('it-IT',{minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+}
+
+function cellClass(sum, expected, isFuture, beforeStart){
+  if (beforeStart || isFuture) return 'na';
+  if (sum<=0) return 'bad';
+  if (expected && sum < expected - 0.01) return 'warn';
+  return 'ok';
+}
+
+function renderPanoramica(){
+  const el = $('view-panoramica');
+  const months = monthsRange();
+  if (!activeMovements().length || !months.length){
+    el.innerHTML = `<div class="card empty">
+      <div style="font-size:2.5rem">🏠</div>
+      <h2 style="margin:10px 0 6px">Nessun dato ancora</h2>
+      <p class="muted" style="margin-bottom:16px">Carica il primo estratto conto per iniziare a monitorare i pagamenti.</p>
+      <button class="btn" onclick="switchView('importa')">📄 Importa estratto conto</button>
+    </div>`;
+    return;
+  }
+  const sums = sumsByTenantMonth();
+  const tenants = filteredTenants(sums);
+  const curYM = nowYM();
+  const firstMonth = {};
+  for (const m of Object.values(state.movements)){
+    const ym = m.date.slice(0,7);
+    if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym;
+  }
+  let html = `<h2>Panoramica pagamenti</h2>
+  <div class="actionsrow">
+    <button class="btn small" onclick="openManual()">💶 Inserisci pagamento manuale</button>
+    <button class="btn small secondary" onclick="exportViewer()">📤 Condividi in sola lettura</button>
+  </div>` + toolbarHtml() + `
+  <div class="legend">
+    <span><span class="dot" style="background:var(--ok)"></span> Pagato</span>
+    <span><span class="dot" style="background:var(--warn)"></span> Parziale (meno dell'atteso)</span>
+    <span><span class="dot" style="background:var(--bad)"></span> Mancante</span>
+    <span><span class="dot" style="background:var(--na)"></span> Fuori periodo</span>
+  </div>`;
+  if (!tenants.length){
+    el.innerHTML = html + '<div class="card empty">Nessun inquilino corrisponde ai filtri.</div>';
+    return;
+  }
+  const manyOwners = Object.keys(state.owners).length>1 && ui.owner==='all';
+  const cellFor = (t, ym) => {
+    const sum = sums[t.id]?.[ym] || 0;
+    const before = firstMonth[t.id] && ym < firstMonth[t.id];
+    const future = ym > curYM;
+    const afterCeased = t.ceased && sum<=0 && ym > (lastMonthOf(t.id)||'0000');
+    return { sum, cls: cellClass(sum, t.expected, future || afterCeased, before) };
+  };
+  // vista desktop: griglia mesi × inquilini
+  html += `<div class="only-desktop"><div class="tablewrap"><table class="gridtable"><tr><th>Inquilino</th>`;
+  for (const ym of months) html += `<th>${monthLabel(ym)}</th>`;
+  html += '</tr>';
+  for (const t of tenants){
+    const own = manyOwners && ownerName(t.ownerId) ? `<span class="muted" style="font-size:.65rem;font-weight:400"> · ${escapeHtml(ownerName(t.ownerId))}</span>` : '';
+    const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
+    html += `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${own}${t.expected?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(t.expected)}</div>`:''}</td>`;
+    for (const ym of months){
+      const c = cellFor(t, ym);
+      const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum) : '✗');
+      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
+      html += `<td><span class="cell ${c.cls}"${click}>${label}</span></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table></div></div>';
+  // vista mobile: card per inquilino con chip mensili scorrevoli
+  html += '<div class="only-mobile">';
+  for (const t of tenants){
+    const own = manyOwners && ownerName(t.ownerId) ? ` · ${escapeHtml(ownerName(t.ownerId))}` : '';
+    const cur = cellFor(t, curYM);
+    const curBadge = t.ceased ? '<span class="badge na">cessato</span>'
+      : cur.cls==='ok' ? '<span class="badge ok">✓ questo mese</span>'
+      : cur.cls==='warn' ? '<span class="badge warn">△ parziale</span>'
+      : cur.cls==='bad' ? '<span class="badge bad">✗ non pagato</span>' : '';
+    html += `<div class="mcard">
+      <h3 onclick="openTenant('${t.id}')">${escapeHtml(t.name)} ${curBadge}</h3>
+      <div class="muted" style="font-size:.72rem;margin:2px 0 6px">${t.expected?'atteso '+fmtEur(t.expected)+'/mese':''}${own}</div>
+      <div class="monthchips">`;
+    for (const ym of months){
+      const c = cellFor(t, ym);
+      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
+      html += `<span class="chipmese ${c.cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€':'✗')}</b></span>`;
+    }
+    html += '</div></div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+  // sulle card mobile porta a destra (mesi più recenti) lo scroll dei chip
+  el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+}
+
+function lastMonthOf(tenantId){
+  let last = null;
+  for (const m of activeMovements())
+    if (m.tenantId===tenantId){ const ym=m.date.slice(0,7); if (!last||ym>last) last=ym; }
+  return last;
+}
+
+function tenantBadge(t, sums){
+  if (t.ceased) return '<span class="badge na">cessato</span>';
+  const st = currentMonthStatus(t, sums);
+  if (st===0) return '<span class="badge bad">mese corrente: non pagato</span>';
+  if (st===1) return '<span class="badge warn">mese corrente: parziale</span>';
+  return '<span class="badge ok">mese corrente: pagato</span>';
+}
+
+function renderInquilini(){
+  const el = $('view-inquilini');
+  if (!Object.keys(state.tenants).length){ el.innerHTML = '<div class="card empty">Nessun inquilino: verranno creati automaticamente al primo import.</div>'; return; }
+  const sums = sumsByTenantMonth();
+  const tenants = filteredTenants(sums);
+  let html = '<h2>Schede inquilini</h2>' + toolbarHtml() + '<div class="tenantgrid">';
+  for (const t of tenants){
+    const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
+    const nMov = Object.values(state.movements).filter(m=>m.tenantId===t.id).length;
+    const own = ownerName(t.ownerId);
+    html += `<div class="tcard" onclick="openTenant('${t.id}')" style="${t.ceased?'opacity:.65':''}">
+      <h3>${escapeHtml(t.name)} ${tenantBadge(t,sums)}</h3>
+      <div class="exp">${t.expected ? 'Affitto atteso: <b>'+fmtEur(t.expected)+'</b>/mese' : 'Affitto atteso non impostato'}${own?' · 👤 '+escapeHtml(own):''}</div>
+      <div class="muted">${nMov} bonifici · totale <span class="amount pos">${fmtEur(tot)}</span></div>
+      <div style="margin-top:9px">
+        <button class="btn small ${t.ceased?'':'secondary'}" onclick="event.stopPropagation();toggleCeased('${t.id}')">${t.ceased?'↩️ Riattiva inquilino':'⏹ Segna come cessato'}</button>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  // sezione ordinanti ignorati (reversibile)
+  const ignored = Object.values(state.ignored).sort((a,b)=>(a.name||'').localeCompare(b.name||'','it'));
+  if (ignored.length){
+    html += `<h3 style="margin-top:22px;color:var(--muted)">🚫 Ordinanti ignorati (${ignored.length})</h3>
+    <p class="muted" style="margin-bottom:10px">Non compaiono nella panoramica; i loro bonifici vengono accantonati automaticamente ai prossimi import. Puoi promuoverli a inquilino in qualsiasi momento: i movimenti storici accantonati verranno recuperati.</p>
+    <div class="tenantgrid">`;
+    for (const g of ignored){
+      const parked = Object.values(state.movements).filter(m=>m.ignored && m.cpNorm===g.cpNorm).length;
+      html += `<div class="tcard" style="opacity:.7">
+        <h3>${escapeHtml(g.name || titleCase(g.cpNorm))} <span class="badge na">ignorato</span></h3>
+        <div class="muted">${parked} moviment${parked===1?'o accantonato':'i accantonati'}</div>
+        <div style="margin-top:9px"><button class="btn small" onclick="promoteIgnored('${escapeHtml(g.cpNorm)}')">↩️ Promuovi a inquilino</button></div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function toggleCeased(id){
+  const t = state.tenants[id];
+  if (!t) return;
+  t.ceased = !t.ceased;
+  if (sb) dbUpsertTenants([t]);
+  renderAll();
+  showToast(t.ceased ? `${t.name} segnato come cessato: resta consultabile nel filtro "Cessati".` : `${t.name} riattivato.`);
+}
+
+function renderMovimenti(){
+  const el = $('view-movimenti');
+  const movs = activeMovements().sort((a,b)=>b.date.localeCompare(a.date));
+  if (!movs.length){ el.innerHTML = '<div class="card empty">Nessun movimento importato.</div>'; return; }
+  const tenants = Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  let html = `<h2>Movimenti in entrata (${movs.length})</h2>
+  <div class="searchbar"><input type="text" id="movsearch" placeholder="🔍 Cerca per ordinante o causale…" oninput="filterMovs(this.value)"></div>
+  <div class="card" style="padding:6px 14px" id="movlist">`;
+  for (const m of movs){
+    const opts = tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
+    html += `<div class="mrow" data-search="${escapeHtml((m.cp+' '+m.desc).toLowerCase())}">
+      <div style="min-width:0">
+        <b>${escapeHtml(m.cp)}</b> <span class="muted">· ${m.date.split('-').reverse().join('/')}</span>
+        <div class="muted" style="font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px">${escapeHtml(m.desc)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${m.manual?'<span class="badge man">manuale</span>':''}
+        <span class="amount pos">${fmtEur(m.amount)}</span>
+        <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="reassign('${m.key}', this.value)" title="Assegna a…">${opts}</select>
+        ${m.manual?`<button class="delbtn" title="Elimina pagamento manuale" onclick="deleteManual('${m.key}')">🗑</button>`:''}
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function filterMovs(q){
+  q = q.toLowerCase().trim();
+  document.querySelectorAll('#movlist .mrow').forEach(r=>{
+    r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none';
+  });
+}
+
+function reassign(key, newTenantId){
+  const mv = state.movements[key];
+  if (!mv || mv.tenantId===newTenantId) return;
+  const target = state.tenants[newTenantId];
+  const sameGroup = activeMovements().filter(m=>m.cpNorm===mv.cpNorm && m.tenantId!==newTenantId);
+  let keys = [key];
+  if (sameGroup.length>1 && confirm(`Ci sono ${sameGroup.length} movimenti con ordinante "${mv.cp}".\nAssegnarli TUTTI a ${target.name}?\n(OK = tutti, Annulla = solo questo)`)){
+    keys = sameGroup.map(m=>m.key);
+  }
+  const oldIds = new Set();
+  for (const k of keys){ oldIds.add(state.movements[k].tenantId); state.movements[k].tenantId = newTenantId; }
+  if (!target.aliases.includes(mv.cpNorm)) target.aliases.push(mv.cpNorm);
+  // elimina schede rimaste vuote (auto-create)
+  const removedTenants = [];
+  for (const oid of oldIds){
+    if (oid!==newTenantId && !Object.values(state.movements).some(m=>m.tenantId===oid)){
+      delete state.tenants[oid];
+      removedTenants.push(oid);
+    }
+  }
+  if (sb){
+    (async ()=>{
+      await dbUpsertTenants([target]);
+      await dbUpsertMovs(keys.map(k=>state.movements[k]));
+      for (const oid of removedTenants) await dbDeleteTenant(oid);
+    })();
+  }
+  renderAll();
+  showToast(`Movimenti assegnati a ${target.name}.`);
+}
+
+/* ---------------- Modali ---------------- */
+
+let editingTenantId = null;
+
+function openTenant(id){
+  const t = state.tenants[id];
+  if (!t) return;
+  editingTenantId = id;
+  $('tm-name').value = t.name;
+  $('tm-expected').value = t.expected || '';
+  // proprietario
+  const ows = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  $('tm-owner').innerHTML = '<option value="">— nessuno —</option>' +
+    ows.map(o=>`<option value="${o.id}" ${o.id===t.ownerId?'selected':''}>${escapeHtml(o.name)}</option>`).join('') +
+    '<option value="__new__">➕ Nuovo proprietario…</option>';
+  // stato cessato
+  const cb = $('tm-ceased');
+  cb.textContent = t.ceased ? '↩️ Riattiva inquilino' : '⏹ Segna come cessato';
+  cb.onclick = e=>{ e.preventDefault(); toggleCeased(t.id); closeModal('tenantmodal'); };
+  $('tm-aliases').innerHTML = t.aliases.map(a=>`<span class="chip">${escapeHtml(titleCase(a))}</span>`).join('') || '<span class="muted">nessuno</span>';
+  const movs = Object.values(state.movements).filter(m=>m.tenantId===id).sort((a,b)=>b.date.localeCompare(a.date));
+  $('tm-count').textContent = movs.length;
+  $('tm-movs').innerHTML = movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} <span class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,44))}</span></span><span class="amount pos">${fmtEur(m.amount)}</span></div>`).join('') || '<p class="muted" style="padding:8px 0">Nessun movimento.</p>';
+  // riepilogo mensile
+  const sums = {};
+  for (const m of movs){ const ym=m.date.slice(0,7); sums[ym]=(sums[ym]||0)+m.amount; }
+  const months = monthsRange().filter(ym => movs.length && ym >= movs[movs.length-1].date.slice(0,7));
+  let mh = '<table><tr><th style="text-align:left">Mese</th><th>Ricevuto</th><th>Stato</th></tr>';
+  const curYM = nowYM();
+  for (const ym of months){
+    if (ym>curYM) continue;
+    const s = sums[ym]||0;
+    const cls = cellClass(s, t.expected, false, false);
+    const lbl = cls==='ok'?'✓ Pagato':cls==='warn'?'△ Parziale':'✗ Mancante';
+    mh += `<tr><td style="text-align:left">${monthLabel(ym)}</td><td class="amount">${s>0?fmtEur(s):'—'}</td><td><span class="badge ${cls}">${lbl}</span></td></tr>`;
+  }
+  $('tm-months').innerHTML = mh + '</table>';
+  const hideBtn = $('tm-hide');
+  hideBtn.textContent = '🚫 Non è un inquilino: ignora questo ordinante';
+  hideBtn.onclick = ()=>{
+    if (!confirm(`Spostare "${t.name}" tra gli ordinanti ignorati?\nI suoi movimenti verranno accantonati (recuperabili promuovendolo di nuovo a inquilino) e i bonifici futuri verranno ignorati automaticamente.`)) return;
+    const n = ignoreTenantInternal(t.id);
+    saveState(); closeModal('tenantmodal'); renderAll();
+    showToast(`Ordinante ignorato: ${n} movimenti accantonati.`);
+  };
+  openModal('tenantmodal');
+}
+
+function saveTenant(){
+  const t = state.tenants[editingTenantId];
+  if (!t) return;
+  const name = $('tm-name').value.trim();
+  if (name) t.name = name;
+  const exp = parseFloat($('tm-expected').value);
+  t.expected = (!isNaN(exp) && exp>0) ? exp : null;
+  let ow = $('tm-owner').value;
+  if (ow==='__new__'){
+    const nn = prompt('Nome del nuovo proprietario:');
+    ow = (nn && nn.trim()) ? createOwner(nn).id : (t.ownerId || '');
+  }
+  t.ownerId = ow || null;
+  if (sb) dbUpsertTenants([t]);
+  closeModal('tenantmodal'); renderAll();
+  showToast('Scheda inquilino aggiornata.');
+}
+
+function openCell(tenantId, ym){
+  const t = state.tenants[tenantId];
+  const movs = Object.values(state.movements).filter(m=>m.tenantId===tenantId && m.date.startsWith(ym)).sort((a,b)=>a.date.localeCompare(b.date));
+  $('cm-title').innerHTML = `${escapeHtml(t.name)} — ${monthLabel(ym)} <button class="close" onclick="closeModal('cellmodal')">×</button>`;
+  const tot = movs.reduce((a,m)=>a+m.amount,0);
+  let html = movs.length
+    ? movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${m.manual?'<span class="badge man">manuale</span>':''}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px"><span class="amount pos">${fmtEur(m.amount)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`).join('')
+    : '<p class="muted">Nessun bonifico ricevuto in questo mese.</p>';
+  if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(tot)}</b></div>`;
+  if (t.expected) html += `<p class="muted" style="margin-top:8px">Affitto atteso: ${fmtEur(t.expected)}</p>`;
+  $('cm-body').innerHTML = html;
+  openModal('cellmodal');
+}
+
+function openModal(id){ $(id).classList.add('open'); }
+function closeModal(id){ $(id).classList.remove('open'); }
+
+/* ---------------- Pagamento manuale (contanti ecc.) ---------------- */
+
+function openManual(){
+  const tenants = Object.values(state.tenants).filter(t=>!t.ceased);
+  if (!tenants.length){ showToast('Nessun inquilino: importa prima un estratto conto.'); return; }
+  $('mm-search').value = '';
+  fillManualTenants('');
+  $('mm-amount').value = '';
+  $('mm-date').value = new Date().toISOString().slice(0,10);
+  $('mm-note').value = '';
+  openModal('manualmodal');
+}
+
+function fillManualTenants(q){
+  const qn = normName(q);
+  const sel = $('mm-tenant');
+  const tenants = Object.values(state.tenants)
+    .filter(t=>!qn || normName(t.name).includes(qn) || t.aliases.some(a=>a.includes(qn)))
+    .sort((a,b)=>(a.ceased-b.ceased) || a.name.localeCompare(b.name,'it'));
+  sel.innerHTML = tenants.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}${t.ceased?' (cessato)':''}</option>`).join('');
+  if (tenants.length===1) sel.selectedIndex = 0;
+}
+
+function manualTenantPicked(){
+  const t = state.tenants[$('mm-tenant').value];
+  if (t && t.expected && !$('mm-amount').value) $('mm-amount').value = t.expected;
+}
+
+function saveManual(){
+  const t = state.tenants[$('mm-tenant').value];
+  const amount = parseFloat($('mm-amount').value);
+  const date = $('mm-date').value;
+  if (!t){ showToast('Seleziona un inquilino.'); return; }
+  if (isNaN(amount) || amount<=0){ showToast('Inserisci un importo valido.'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)){ showToast('Inserisci una data valida.'); return; }
+  const note = $('mm-note').value.trim();
+  const key = newId('manual:');
+  state.movements[key] = {
+    key, date, amount,
+    desc: 'Pagamento manuale' + (note ? ' — ' + note : ''),
+    cp: t.name, cpNorm: t.aliases[0] || normName(t.name),
+    tenantId: t.id, ownerId: t.ownerId || null, ignored: false, manual: true
+  };
+  if (sb) dbUpsertMovs([state.movements[key]]);
+  closeModal('manualmodal'); renderAll();
+  showToast(`Registrato pagamento manuale di ${fmtEur(amount)} per ${t.name}.`);
+}
+
+function deleteManual(key){
+  const m = state.movements[key];
+  if (!m || !m.manual) return;
+  const t = state.tenants[m.tenantId];
+  if (!confirm(`Eliminare il pagamento manuale di ${fmtEur(m.amount)} del ${m.date.split('-').reverse().join('/')}${t?' per '+t.name:''}?`)) return;
+  delete state.movements[key];
+  if (sb) dbDeleteMov(key);
+  renderAll();
+  showToast('Pagamento manuale eliminato.');
+}
+
+/* ---------------- Condivisione in sola lettura (snapshot HTML) ---------------- */
+
+function exportViewer(){
+  if (!activeMovements().length){ showToast('Niente da condividere: importa prima un estratto conto.'); return; }
+  const sums = sumsByTenantMonth();
+  const months = monthsRange();
+  const curYM = nowYM();
+  const firstMonth = {};
+  for (const m of activeMovements()){
+    const ym = m.date.slice(0,7);
+    if (m.tenantId && (!firstMonth[m.tenantId] || ym<firstMonth[m.tenantId])) firstMonth[m.tenantId] = ym;
+  }
+  const tenants = Object.values(state.tenants)
+    .sort((a,b)=>a.name.localeCompare(b.name,'it'))
+    .map(t=>({ n:t.name, o:ownerName(t.ownerId)||'', e:t.expected||0, c:t.ceased?1:0,
+               f:firstMonth[t.id]||'', l:lastMonthOf(t.id)||'', s:sums[t.id]||{} }));
+  const snap = { g:new Date().toISOString().slice(0,10), cur:curYM, months, tenants,
+                 owners:[...new Set(tenants.map(t=>t.o).filter(Boolean))] };
+  const json = JSON.stringify(snap).replace(/</g,'\\u003c');
+  const html = viewerTemplate().replace('"__SNAPSHOT__"', json);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([html], {type:'text/html'}));
+  a.download = 'situazione-affitti-' + snap.g + '.html';
+  a.click();
+  showToast('Creato file di sola visualizzazione (contiene solo nomi e totali mensili, niente causali). È uno snapshot di oggi: rigeneralo dopo ogni nuovo import. Invialo via WhatsApp o email.');
+}
+
+function viewerTemplate(){
+  return '<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">' +
+'<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Situazione affitti (sola lettura)</title>' +
+'<style>' +
+'*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#1c2733;font-size:15px;padding:14px;padding-bottom:40px}' +
+'h1{font-size:1.1rem;margin-bottom:2px}.sub{color:#68788c;font-size:.78rem;margin-bottom:12px}' +
+'.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.bar input,.bar select{padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:16px;background:#fff}' +
+'.bar input{flex:1;min-width:140px}' +
+'.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:.75rem;color:#68788c;margin-bottom:10px}.dot{width:11px;height:11px;border-radius:4px;display:inline-block;vertical-align:-1px}' +
+'.wrap{overflow-x:auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px}' +
+'table{border-collapse:separate;border-spacing:0;font-size:.82rem;width:100%}' +
+'th,td{padding:9px 10px;border-bottom:1px solid #e2e8f0;white-space:nowrap;text-align:center}' +
+'th{background:#f8fafc;color:#68788c;font-size:.7rem;text-transform:uppercase}' +
+'td:first-child,th:first-child{position:sticky;left:0;background:#fff;text-align:left;font-weight:600;border-right:1px solid #e2e8f0;max-width:150px;overflow:hidden;text-overflow:ellipsis}' +
+'th:first-child{background:#f8fafc}' +
+'.cell{border-radius:7px;padding:5px 8px;display:inline-block;min-width:64px;font-weight:600;font-size:.78rem}' +
+'.ok{background:#dcf5e3;color:#146c2e}.warn{background:#fdf0d3;color:#92600a}.bad{background:#fde3e3;color:#a12626}.na{background:#eef1f5;color:#9aa7b5;font-weight:400}' +
+'.badge{font-size:.65rem;padding:2px 7px;border-radius:999px;background:#eef1f5;color:#9aa7b5}' +
+'.note{margin-top:14px;font-size:.75rem;color:#68788c}' +
+'</style></head><body>' +
+'<h1>🏠 Situazione affitti <span class="badge">sola lettura</span></h1>' +
+'<div class="sub" id="sub"></div>' +
+'<div class="bar"><input type="text" id="q" placeholder="🔍 Cerca inquilino…"><select id="ow"></select><select id="st">' +
+'<option value="active">Attivi</option><option value="ceased">Cessati</option><option value="all">Tutti</option></select></div>' +
+'<div class="legend"><span><span class="dot ok"></span> Pagato</span><span><span class="dot warn"></span> Parziale</span><span><span class="dot bad"></span> Mancante</span><span><span class="dot na"></span> Fuori periodo</span></div>' +
+'<div class="wrap" id="grid"></div>' +
+'<p class="note">Snapshot generato dal proprietario: i dati si aggiornano solo quando viene inviato un nuovo file. Contiene esclusivamente nomi e totali mensili.</p>' +
+'<script>var D="__SNAPSHOT__";' +
+'var MESI=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];' +
+'function ml(ym){var p=ym.split("-");return MESI[+p[1]-1]+" "+p[0].slice(2);}' +
+'function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}' +
+'function fmt(n){return n.toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";}' +
+'document.getElementById("sub").textContent="Aggiornato al "+D.g.split("-").reverse().join("/");' +
+'var ow=document.getElementById("ow");ow.innerHTML="<option value=\\"\\">Tutti i proprietari</option>"+D.owners.map(function(o){return "<option>"+esc(o)+"</option>";}).join("");' +
+'if(D.owners.length<2)ow.style.display="none";' +
+'function cls(t,ym){var s=t.s[ym]||0;if(t.f&&ym<t.f)return "na";if(ym>D.cur)return "na";if(t.c&&s<=0&&t.l&&ym>t.l)return "na";if(s<=0)return "bad";if(t.e&&s<t.e-0.01)return "warn";return "ok";}' +
+'function render(){var q=document.getElementById("q").value.toLowerCase(),o=ow.value,st=document.getElementById("st").value;' +
+'var ts=D.tenants.filter(function(t){if(st==="active"&&t.c)return false;if(st==="ceased"&&!t.c)return false;if(o&&t.o!==o)return false;if(q&&t.n.toLowerCase().indexOf(q)<0)return false;return true;});' +
+'var h="<table><tr><th>Inquilino</th>"+D.months.map(function(m){return "<th>"+ml(m)+"</th>";}).join("")+"</tr>";' +
+'ts.forEach(function(t){h+="<tr><td>"+esc(t.n)+(t.c?" <span class=\\"badge\\">cessato</span>":"")+(t.o?"<div style=\\"font-size:.65rem;color:#68788c;font-weight:400\\">"+esc(t.o)+"</div>":"")+"</td>";' +
+'D.months.forEach(function(ym){var c=cls(t,ym);var s=t.s[ym]||0;h+="<td><span class=\\"cell "+c+"\\">"+(c==="na"?"—":(s>0?fmt(s):"✗"))+"</span></td>";});h+="</tr>";});' +
+'h+="</table>";if(!ts.length)h="<p style=\\"padding:20px;color:#68788c\\">Nessun inquilino corrisponde ai filtri.</p>";' +
+'document.getElementById("grid").innerHTML=h;}' +
+'["q","ow","st"].forEach(function(id){document.getElementById(id).addEventListener("input",render);document.getElementById(id).addEventListener("change",render);});' +
+'render();<\/script></body></html>';
+}
+
+/* ---------------- Varie ---------------- */
+
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let toastTimer = null;
+function showToast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), 8000);
+}
+
+function switchView(v){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
+  for (const id of ['panoramica','inquilini','movimenti','importa'])
+    $('view-'+id).style.display = id===v ? '' : 'none';
+}
+
+function renderAll(){
+  renderPanoramica();
+  renderInquilini();
+  renderMovimenti();
+}
+
+function exportBackup(){
+  const blob = new Blob([JSON.stringify(state, null, 1)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'affitticheck-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+}
+
+async function resetAll(){
+  if (!confirm('Cancellare TUTTI i dati (inquilini e movimenti) PER TUTTI GLI UTENTI? L\'operazione non è reversibile.')) return;
+  if (!confirm('Confermi davvero? Verrà svuotato il database condiviso.')) return;
+  if (sb){
+    await sb.from('movimenti').delete().neq('chiave','').then(dbErr);
+    await sb.from('inquilini').delete().neq('id','').then(dbErr);
+    await sb.from('ordinanti_ignorati').delete().neq('ordinante_norm','').then(dbErr);
+    await sb.from('proprietari').delete().neq('id','').then(dbErr);
+  }
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, nextId:1 };
+  renderAll();
+  showToast('Dati azzerati.');
+}
+
+/* ---------------- Init (solo browser) ---------------- */
+
+function init(){
+  // PWA: il service worker funziona solo su http(s); aperta come file locale l'app funziona comunque
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+
+  // Backend Supabase + login
+  if (!window.supabase){
+    $('login-err').textContent = 'Serve la connessione internet per caricare l\'app (librerie e dati online).';
+  } else {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+    sb.auth.onAuthStateChange((_ev, session)=>{
+      if (session && !appStarted){ appStarted = true; startApp(); }
+      else if (!session){ appStarted = false; $('loginscreen').style.display = 'flex'; }
+    });
+  }
+  $('login-pw').addEventListener('keydown', e=>{ if (e.key==='Enter') doLogin(); });
+
+  const dz = $('dropzone'), fi = $('fileinput');
+  dz.addEventListener('click', ()=>fi.click());
+  fi.addEventListener('change', ()=>{ if (fi.files[0]) handleFile(fi.files[0]); fi.value=''; });
+  dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', ()=>dz.classList.remove('drag'));
+  dz.addEventListener('drop', e=>{
+    e.preventDefault(); dz.classList.remove('drag');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click', ()=>switchView(b.dataset.view)));
+  document.querySelectorAll('.modal-bg').forEach(m=>m.addEventListener('click', e=>{ if (e.target===m) m.classList.remove('open'); }));
+
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById) {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+}
+
+/* Export per test in Node */
+if (typeof module !== 'undefined' && module.exports){
+  module.exports = { parseCSV, detectDelimiter, parseItalianDate, parseItalianAmount,
+    findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
+    importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
+    viewerTemplate, getState: ()=>state, setState: s=>{ state=s; } };
+}
+</script>
+</body>
+</html>
