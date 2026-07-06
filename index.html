@@ -576,6 +576,75 @@ function dedupKey(dateISO, amount, cpNorm){
    Permette di attribuire acconti/saldi al mese giusto. */
 function movMonth(m){ return m.refMonth || m.date.slice(0,7); }
 
+/* Tutti i mesi coperti da un movimento (un bonifico può essere suddiviso su più mesi) */
+function movMonths(m){ return (m.splits && m.splits.length) ? m.splits.map(s=>s.ym) : [movMonth(m)]; }
+
+/* ---- Lettura della causale: a quale/i mese/i si riferisce il pagamento? ----
+   Motore a regole per l'italiano: nomi dei mesi, abbreviazioni con contesto,
+   anni espliciti, intervalli "da X a Y", più mesi nella stessa causale. */
+const MESE_NOME = {GENNAIO:1,FEBBRAIO:2,MARZO:3,APRILE:4,MAGGIO:5,GIUGNO:6,LUGLIO:7,AGOSTO:8,SETTEMBRE:9,OTTOBRE:10,NOVEMBRE:11,DICEMBRE:12};
+const MESE_ABBR = {GEN:1,FEB:2,MAR:3,APR:4,MAG:5,GIU:6,LUG:7,AGO:8,SET:9,SETT:9,OTT:10,NOV:11,DIC:12};
+const CTX_AFFITTO = /\b(AFFITTO|FITTO|CANONE|MESE|MENSILITA|LOCAZIONE|RATA|SALDO|ACCONTO)\b/;
+
+function parseCausaleMonths(desc, dateISO){
+  const txt = normName(desc);
+  if (!txt) return [];
+  const toks = txt.split(' ');
+  const found = [];               // {mo, year|null, idx}
+  for (let i=0;i<toks.length;i++){
+    const tk = toks[i];
+    let mo = MESE_NOME[tk] || null;
+    if (!mo && MESE_ABBR[tk] !== undefined){
+      // abbreviazione: accettata solo con contesto (evita "MAR" in "MARIO")
+      const prev = toks[i-1]||'', next = toks[i+1]||'';
+      const ctx = CTX_AFFITTO.test(prev) || /^20\d\d$/.test(next) ||
+                  MESE_NOME[next]!==undefined || MESE_ABBR[next]!==undefined ||
+                  MESE_NOME[prev]!==undefined || MESE_ABBR[prev]!==undefined;
+      if (ctx) mo = MESE_ABBR[tk];
+    }
+    if (mo) found.push({ mo, year: null, idx: i });
+  }
+  if (!found.length) return [];
+  // anni espliciti: si applicano ai mesi precedenti senza anno (es. "GENNAIO FEBBRAIO 2026")
+  for (let i=0;i<toks.length;i++){
+    if (/^20\d\d$/.test(toks[i])){
+      const y = +toks[i];
+      for (const f of found) if (f.idx < i && f.year===null) f.year = y;
+    }
+  }
+  // intervallo "DA GENNAIO A MARZO": espandi i mesi intermedi
+  if (found.length===2){
+    const between = toks.slice(found[0].idx+1, found[1].idx).join(' ');
+    const isRange = toks[found[0].idx-1]==='DA' && /^A$|\bA$/.test(between.trim());
+    if (isRange){
+      const exp = [];
+      let cur = found[0].mo, y = found[0].year;
+      for (let g=0; g<12; g++){
+        exp.push({ mo: cur, year: y, idx: found[0].idx });
+        if (cur===found[1].mo) break;
+        cur = cur===12 ? 1 : cur+1;
+        if (cur===1 && y!==null) y++;
+      }
+      found.length = 0; found.push(...exp);
+    }
+  }
+  // anno mancante: il candidato più vicino alla data del bonifico (arretrati più probabili degli anticipi lontani)
+  const [py, pm] = dateISO.slice(0,7).split('-').map(Number);
+  const resolve = f => {
+    if (f.year) return f.year + '-' + pad2(f.mo);
+    let best = null, bestScore = 1e9;
+    for (const y of [py-1, py, py+1]){
+      const diff = (y-py)*12 + (f.mo-pm);
+      if (diff > 2) continue;                       // niente anticipi oltre 2 mesi
+      const score = Math.abs(diff)*2 + (diff>0 ? 1 : 0);
+      if (score < bestScore){ bestScore = score; best = y + '-' + pad2(f.mo); }
+    }
+    return best;
+  };
+  const out = [...new Set(found.map(resolve).filter(Boolean))].sort();
+  return out.length <= 6 ? out : [];                // più di 6 mesi: probabile falso positivo
+}
+
 function shiftMonth(ym, delta){
   let [y, mo] = ym.split('-').map(Number);
   mo += delta;
@@ -592,7 +661,8 @@ function detectAmbiguous(keys){
   const sums = sumsByTenantMonth();
   for (const k of keys){
     const m = state.movements[k];
-    if (!m || m.ignored || !m.tenantId || m.refMonth) continue;
+    // niente domanda se la causale ha già dichiarato la competenza (o è suddiviso)
+    if (!m || m.ignored || !m.tenantId || m.refMonth || m.autoRef || (m.splits && m.splits.length)) continue;
     const t = state.tenants[m.tenantId];
     if (!t || !t.expected) continue;
     const ym = m.date.slice(0,7);
@@ -629,7 +699,8 @@ function dbErr(r){
 }
 const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:m.desc||'',
   ordinante:m.cp||'', ordinante_norm:m.cpNorm||'', inquilino_id:m.tenantId||null,
-  proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null });
+  proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null,
+  suddivisione:m.splits||null, auto_competenza:!!m.autoRef });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
   proprietario_id:t.ownerId||null, alias:t.aliases||[] });
 
@@ -655,7 +726,8 @@ async function loadAll(){
     ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
-    ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null });
+    ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
+    splits:r.suddivisione||null, autoRef:!!r.auto_competenza });
   g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
   // memoria dei formati file già confermati
   state.mappings = {};
@@ -857,7 +929,8 @@ function importMovements(list, ownerId){
     // ordinante in lista ignorati: il movimento viene accantonato senza domande
     // (resta recuperabile se in futuro l'ordinante viene promosso a inquilino)
     if (!findTenantFor(mv.cpNorm) && findIgnoredFor(mv.cpNorm)){
-      state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: null, ownerId: ownerId || null, ignored: true };
+      state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: null, ownerId: ownerId || null, ignored: true,
+        refMonth: mv.refMonth || null, splits: mv.splits || null, autoRef: !!mv.autoRef };
       newMovKeys.push(key);
       ignoredCount++;
       continue;
@@ -869,7 +942,8 @@ function importMovements(list, ownerId){
       if (!tenant.ownerId && ownerId) tenant.ownerId = ownerId;   // non sovrascrive un'assegnazione esistente
     }
     touchedTenants.add(tenant.id);
-    state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: tenant.id, ownerId: ownerId || null, ignored: false };
+    state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: tenant.id, ownerId: ownerId || null, ignored: false,
+      refMonth: mv.refMonth || null, splits: mv.splits || null, autoRef: !!mv.autoRef };
     newMovKeys.push(key);
     added++;
   }
@@ -1084,7 +1158,18 @@ function confirmImport(){
       cpNorm = normName(cp);
     }
     if (!cpNorm){ skipped++; continue; }
-    list.push({ date, amount, desc, cp, cpNorm });
+    // lettura della causale: mese/i di competenza dichiarati nel testo
+    const mv = { date, amount, desc, cp, cpNorm };
+    const months = parseCausaleMonths(desc, date);
+    if (months.length === 1){
+      mv.autoRef = true;
+      if (months[0] !== date.slice(0,7)) mv.refMonth = months[0];
+    } else if (months.length > 1){
+      mv.autoRef = true;
+      const quota = Math.round(amount / months.length * 100) / 100;
+      mv.splits = months.map((ym,i)=>({ ym, amount: i===months.length-1 ? Math.round((amount - quota*(months.length-1))*100)/100 : quota }));
+    }
+    list.push(mv);
   }
   closeModal('mapmodal');
   pendingRows = null;
@@ -1270,7 +1355,7 @@ function setUI(k,v){
 
 function monthsRange(){
   const set = new Set();
-  for (const m of activeMovements()) set.add(movMonth(m));
+  for (const m of activeMovements()) for (const ym of movMonths(m)) set.add(ym);
   if (!set.size) return [];
   const arr = [...set].sort();
   const out = [];
@@ -1291,10 +1376,25 @@ function monthLabel(ym){
 function sumsByTenantMonth(){
   const sums = {};
   for (const m of activeMovements()){
-    const ym = movMonth(m);
-    (sums[m.tenantId] = sums[m.tenantId] || {})[ym] = (sums[m.tenantId]?.[ym] || 0) + m.amount;
+    const bucket = (sums[m.tenantId] = sums[m.tenantId] || {});
+    if (m.splits && m.splits.length){
+      for (const s of m.splits) bucket[s.ym] = (bucket[s.ym] || 0) + s.amount;
+    } else {
+      const ym = movMonth(m);
+      bucket[ym] = (bucket[ym] || 0) + m.amount;
+    }
   }
   return sums;
+}
+
+/* celle con almeno un movimento associato automaticamente dalla causale (asterisco) */
+function autoMarks(){
+  const set = new Set();
+  for (const m of activeMovements()){
+    if (!m.autoRef || !m.tenantId) continue;
+    for (const ym of movMonths(m)) set.add(m.tenantId + '|' + ym);
+  }
+  return set;
 }
 
 function fmtEur(n){
@@ -1321,12 +1421,13 @@ function renderPanoramica(){
     return;
   }
   const sums = sumsByTenantMonth();
+  const marks = autoMarks();
   const tenants = filteredTenants(sums);
   const curYM = nowYM();
   const firstMonth = {};
   for (const m of activeMovements()){
-    const ym = movMonth(m);
-    if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym;
+    for (const ym of movMonths(m))
+      if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym;
   }
   let html = `<h2>Panoramica pagamenti</h2>
   <div class="actionsrow">
@@ -1361,7 +1462,8 @@ function renderPanoramica(){
     html += `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${own}${t.expected?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(t.expected)}</div>`:''}</td>`;
     for (const ym of months){
       const c = cellFor(t, ym);
-      const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum) : '✗');
+      const star = marks.has(t.id+'|'+ym) ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
+      const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum)+star : '✗');
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
       html += `<td><span class="cell ${c.cls}"${click}>${label}</span></td>`;
     }
@@ -1383,8 +1485,9 @@ function renderPanoramica(){
       <div class="monthchips">`;
     for (const ym of months){
       const c = cellFor(t, ym);
+      const star = marks.has(t.id+'|'+ym) ? '✱' : '';
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
-      html += `<span class="chipmese ${c.cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€':'✗')}</b></span>`;
+      html += `<span class="chipmese ${c.cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
     }
     html += '</div></div>';
   }
@@ -1397,7 +1500,7 @@ function renderPanoramica(){
 function lastMonthOf(tenantId){
   let last = null;
   for (const m of activeMovements())
-    if (m.tenantId===tenantId){ const ym=movMonth(m); if (!last||ym>last) last=ym; }
+    if (m.tenantId===tenantId) for (const ym of movMonths(m)){ if (!last||ym>last) last=ym; }
   return last;
 }
 
@@ -1474,6 +1577,8 @@ function renderMovimenti(){
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${m.manual?'<span class="badge man">manuale</span>':''}
+        ${m.autoRef?'<span class="badge ok" title="competenza letta dalla causale">✱</span>':''}
+        ${(m.splits&&m.splits.length)?`<span class="badge warn">${m.splits.length} mesi</span>`:''}
         <span class="amount pos">${fmtEur(m.amount)}</span>
         <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="reassign('${m.key}', this.value)" title="Assegna a…">${opts}</select>
         ${m.manual?`<button class="delbtn" title="Elimina pagamento manuale" onclick="deleteManual('${m.key}')">🗑</button>`:''}
@@ -1545,10 +1650,13 @@ function openTenant(id){
   const movs = Object.values(state.movements).filter(m=>m.tenantId===id && !m.ignored).sort((a,b)=>b.date.localeCompare(a.date));
   $('tm-count').textContent = movs.length;
   $('tm-movs').innerHTML = movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} <span class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,44))}</span></span><span class="amount pos">${fmtEur(m.amount)}</span></div>`).join('') || '<p class="muted" style="padding:8px 0">Nessun movimento.</p>';
-  // riepilogo mensile (per mese di competenza)
+  // riepilogo mensile (per mese di competenza, con suddivisioni)
   const sums = {};
-  for (const m of movs){ const ym=movMonth(m); sums[ym]=(sums[ym]||0)+m.amount; }
-  const first = movs.length ? movs.map(movMonth).sort()[0] : null;
+  for (const m of movs){
+    if (m.splits && m.splits.length) for (const s of m.splits) sums[s.ym]=(sums[s.ym]||0)+s.amount;
+    else { const ym=movMonth(m); sums[ym]=(sums[ym]||0)+m.amount; }
+  }
+  const first = movs.length ? movs.flatMap(movMonths).sort()[0] : null;
   const months = monthsRange().filter(ym => first && ym >= first);
   let mh = '<table><tr><th style="text-align:left">Mese</th><th>Ricevuto</th><th>Stato</th></tr>';
   const curYM = nowYM();
@@ -1592,18 +1700,30 @@ function saveTenant(){
 
 function openCell(tenantId, ym){
   const t = state.tenants[tenantId];
-  const movs = activeMovements().filter(m=>m.tenantId===tenantId && movMonth(m)===ym).sort((a,b)=>a.date.localeCompare(b.date));
+  const movs = activeMovements().filter(m=>m.tenantId===tenantId && movMonths(m).includes(ym)).sort((a,b)=>a.date.localeCompare(b.date));
   $('cm-title').innerHTML = `${escapeHtml(t.name)} — ${monthLabel(ym)} <button class="close" onclick="closeModal('cellmodal')">×</button>`;
   const tot = movs.reduce((a,m)=>a+m.amount,0);
   const refSel = m => {
+    if (m.splits && m.splits.length) return '';   // i bonifici suddivisi non si spostano dal menu rapido
     const cur = movMonth(m);
     return `<select style="width:auto;font-size:.68rem;padding:3px 5px" title="Mese di competenza" onchange="setRefMonth('${m.key}', this.value);closeModal('cellmodal');renderAll();showToast('Competenza aggiornata.')">` +
       [shiftMonth(cur,-1), cur, shiftMonth(cur,1)].map(y=>`<option value="${y}" ${y===cur?'selected':''}>comp. ${monthLabel(y)}</option>`).join('') + '</select>';
   };
-  let html = movs.length
-    ? movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${m.manual?'<span class="badge man">manuale</span>':''}${m.refMonth?'<span class="badge warn">acconto/saldo</span>':''}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px">${refSel(m)}<span class="amount pos">${fmtEur(m.amount)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`).join('')
-    : '<p class="muted">Nessun bonifico ricevuto in questo mese.</p>';
-  if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(tot)}</b></div>`;
+  const rowFor = m => {
+    const part = (m.splits && m.splits.length) ? m.splits.find(s=>s.ym===ym) : null;
+    const shown = part ? part.amount : m.amount;
+    const badges = (m.manual?'<span class="badge man">manuale</span> ':'') +
+      (m.autoRef?'<span class="badge ok">✱ da causale</span> ':'') +
+      (part?`<span class="badge warn">quota di ${fmtEur(m.amount)} su ${m.splits.length} mesi</span> `:'') +
+      (!part && m.refMonth?'<span class="badge warn">competenza spostata</span> ':'');
+    return `<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${badges}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px">${refSel(m)}<span class="amount pos">${fmtEur(shown)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`;
+  };
+  const totCell = movs.reduce((a,m)=>{
+    const part = (m.splits && m.splits.length) ? m.splits.find(s=>s.ym===ym) : null;
+    return a + (part ? part.amount : m.amount);
+  }, 0);
+  let html = movs.length ? movs.map(rowFor).join('') : '<p class="muted">Nessun bonifico ricevuto in questo mese.</p>';
+  if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(totCell)}</b></div>`;
   if (t.expected) html += `<p class="muted" style="margin-top:8px">Affitto atteso: ${fmtEur(t.expected)}</p>`;
   $('cm-body').innerHTML = html;
   openModal('cellmodal');
@@ -1849,7 +1969,7 @@ if (typeof module !== 'undefined' && module.exports){
   module.exports = { parseCSV, detectDelimiter, parseItalianDate, parseItalianAmount,
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
-    viewerTemplate, movMonth, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore,
+    viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
