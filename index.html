@@ -356,7 +356,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.1.1';
+const APP_VERSION = 'v2.1.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1590,7 +1590,6 @@ function tenantBadge(t, sums){
 
 function renderInquilini(){
   const el = $('view-inquilini');
-  if (!Object.keys(state.tenants).length){ el.innerHTML = '<div class="card empty">Nessun inquilino: verranno creati automaticamente al primo import.</div>'; return; }
   const sums = sumsByTenantMonth();
   const tenants = filteredTenants(sums);
   let html = `<h2>Anagrafica</h2>
@@ -1627,6 +1626,10 @@ function renderInquilini(){
 
   // ---- sotto-scheda INQUILINI ----
   html += `<div class="actionsrow"><button class="btn" onclick="newTenantManual()">➕ Crea inquilino</button></div>`;
+  if (!Object.keys(state.tenants).length){
+    el.innerHTML = html + '<div class="card empty">Nessun inquilino in anagrafica: creane uno con il bottone qui sopra, oppure importa un estratto conto e crea le schede dai bonifici trovati.</div>';
+    return;
+  }
   html += toolbarHtml() + '<div class="tenantgrid">';
   for (const t of tenants){
     const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
