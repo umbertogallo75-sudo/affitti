@@ -363,7 +363,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.4.1';
+const APP_VERSION = 'v2.4.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -591,10 +591,11 @@ function autoDetectColumns(rows, headerIdx){
 const CP_STOP = 'CAUSALE|PER|RIF|BIC|IBAN|NOTE|INFO|DATA|CRO|TRN|BENEF|BENEFICIARIO|CONTO|ADDEBITO|ACCREDITO|COMMISSIONI|EUR|IMPORTO|PRESSO|COD|ANAGRAFICA|ABI|CAB';
 function extractCounterparty(desc){
   const d = ' ' + normName(desc) + ' ';
+  const pulisci = s => s.replace(/^(?:MITT|MITTENTE)\s+/,'').trim();   // etichetta "MITT." di Intesa
   let m = d.match(new RegExp('\\bORDINANTE\\s+([A-Z][A-Z ]{2,}?)(?=\\s+(?:'+CP_STOP+')\\b|\\s*$)'));
-  if (m) return m[1].trim();
+  if (m) return pulisci(m[1]);
   m = d.match(new RegExp('\\b(?:BONIFICO|BON|GIROCONTO|ACCREDITO|SEPA)\\b[A-Z ]*?\\bDA\\s+([A-Z][A-Z ]{2,}?)(?=\\s+(?:'+CP_STOP+')\\b|\\s*$)'));
-  if (m) return m[1].trim();
+  if (m) return pulisci(m[1]);
   // Formato reale Banca Sella (ListaMovimentiConto.xls): la descrizione è la causale
   // libera con l'ordinante in coda dopo l'ultimo " DA ", es. "FITTO MESE GENNAIO DA NOME COGNOME"
   const idx = d.lastIndexOf(' DA ');
