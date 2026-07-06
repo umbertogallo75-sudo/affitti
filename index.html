@@ -61,6 +61,13 @@ th{background:#f8fafc;font-weight:600;color:var(--muted);font-size:.75rem;text-t
 .cell.warn{background:var(--warn);color:var(--warn-ink)}
 .cell.bad{background:var(--bad);color:var(--bad-ink)}
 .cell.na{background:var(--na);color:var(--na-ink);cursor:default;font-weight:400}
+/* quota di un bonifico multi-mese: colore dedicato + finestrella al passaggio */
+.cell.split{background:var(--lav);color:#383FA3}
+.cell{position:relative}
+.cell[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:115%;left:50%;transform:translateX(-50%);
+  background:#1c2733;color:#fff;padding:7px 10px;border-radius:8px;font-size:.68rem;font-weight:500;
+  white-space:pre-line;width:max-content;max-width:240px;text-align:left;z-index:40;box-shadow:0 4px 14px rgba(0,0,0,.3);pointer-events:none}
+.chipmese.split{background:var(--lav);color:#383FA3}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin:10px 2px;font-size:.78rem;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .dot{width:12px;height:12px;border-radius:4px;display:inline-block}
@@ -356,7 +363,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.1.2';
+const APP_VERSION = 'v2.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -846,8 +853,27 @@ function unassignedMovements(){
 
 function createTenant(cpNorm, displayName, ownerId){
   const id = newId('t-');
-  state.tenants[id] = { id, name: titleCase(displayName || cpNorm), expected: null, aliases: cpNorm?[cpNorm]:[], address:'', hidden: false, ceased: false, ownerId: ownerId || null };
+  let name = titleCase(displayName || cpNorm);
+  // omonimi ammessi (stesso nome, fitti diversi): il secondo riceve un asterisco
+  const existing = new Set(Object.values(state.tenants).map(t=>t.name.trim().toLowerCase()));
+  while (existing.has(name.trim().toLowerCase())) name += ' *';
+  state.tenants[id] = { id, name, expected: null, aliases: cpNorm?[cpNorm]:[], address:'', hidden: false, ceased: false, ownerId: ownerId || null };
   return state.tenants[id];
+}
+
+/* Proposta "intelligente" di abbinamento: punteggio per token in comune
+   tra ordinante e nome/alias degli inquilini (usata quando il match certo manca) */
+function bestTenantGuess(cpNorm){
+  const toks = cpNorm.split(' ').filter(t=>t.length>2);
+  if (!toks.length) return null;
+  let best = null, bestScore = 0, tie = false;
+  for (const t of Object.values(state.tenants)){
+    const hay = new Set((normName(t.name) + ' ' + t.aliases.join(' ')).split(' '));
+    const score = toks.filter(tok=>hay.has(tok)).length;
+    if (score > bestScore){ bestScore = score; best = t; tie = false; }
+    else if (score === bestScore && score > 0) tie = true;
+  }
+  return (bestScore >= 1 && !tie) ? best : null;
 }
 
 function createOwner(name){
@@ -1114,21 +1140,18 @@ function startMapping(rows){
   fill('map-desc',   map.desc,   '— non presente —');
   fill('map-cp',     map.cp,     '— non presente —');
 
-  // selettore proprietario/conto
+  // selettore proprietario/conto: scelta esplicita OBBLIGATORIA a ogni import
   const ow = document.getElementById('map-owner');
-  ow.innerHTML = '';
+  ow.innerHTML = '<option value="" selected>— scegli il proprietario / conto —</option>';
   const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
-  if (!owners.length) ow.innerHTML = '<option value="">— nessun proprietario definito —</option>';
   for (const o of owners){
     const opt = document.createElement('option');
     opt.value = o.id; opt.textContent = o.name;
-    if (o.id===state.lastOwnerId) opt.selected = true;
     ow.appendChild(opt);
   }
   const newOpt = document.createElement('option');
   newOpt.value = '__new__'; newOpt.textContent = '➕ Nuovo proprietario…';
   ow.appendChild(newOpt);
-  if (!owners.length) ow.value = '__new__';
 
   // indicazione del file corrente e della posizione in coda
   const pos = queueTotal > 1 ? ` (${queueTotal - fileQueue.length} di ${queueTotal})` : '';
@@ -1162,14 +1185,19 @@ function confirmImport(){
   if (ci.date<0){ showToast('Seleziona la colonna della data.'); return; }
   if (ci.amount<0 && ci.inflow<0){ showToast('Seleziona la colonna dell\'importo (o quella delle entrate).'); return; }
 
-  // proprietario/conto
+  // proprietario/conto: OBBLIGATORIO, senza non si importa
   let ownerId = document.getElementById('map-owner').value;
-  if (ownerId==='__new__' || ownerId===''){
-    const name = prompt('Nome del proprietario (es. "Umberto" o "Conto Sella Umberto"):');
-    if (!name || !name.trim()){ showToast('Indica il proprietario a cui appartiene l\'estratto conto.'); return; }
+  if (ownerId==='__new__'){
+    const name = prompt('Nome del nuovo proprietario (es. "Gallo Vittorio"):');
+    if (!name || !name.trim()){ showToast('⚠️ Import bloccato: indica il proprietario a cui appartiene l\'estratto conto.'); return; }
     ownerId = createOwner(name).id;
   }
-  state.lastOwnerId = ownerId;
+  if (!ownerId){
+    document.getElementById('map-owner').style.outline = '2px solid #E5484D';
+    showToast('⚠️ Import bloccato: scegli il proprietario/conto a cui appartiene questo estratto.');
+    return;
+  }
+  document.getElementById('map-owner').style.outline = '';
 
   // memorizza la mappatura confermata per questo formato di file (condivisa tra gli utenti)
   const sig = formatSignature(pendingRows, pendingHeaderIdx);
@@ -1252,20 +1280,25 @@ function tenantOptionsHtml(){
 
 function showTriage(groups){
   const body = $('triage-body');
-  body.innerHTML = groups.map((g,i)=>`
+  body.innerHTML = groups.map((g,i)=>{
+    const guess = bestTenantGuess(g.cpNorm);   // proposta di abbinamento da confermare
+    const opts = Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'))
+      .map(t=>`<option value="assign:${t.id}" ${guess&&t.id===guess.id?'selected':''}>→ Assegna a: ${escapeHtml(t.name)}${guess&&t.id===guess.id?' (proposto)':''}</option>`).join('');
+    return `
     <div class="mrow" style="gap:12px">
       <div style="min-width:0;flex:1">
-        <b>${escapeHtml(titleCase(g.cp))}</b>
+        <b>${escapeHtml(titleCase(g.cp))}</b>${guess?` <span class="badge ok">proposta: ${escapeHtml(guess.name)}</span>`:''}
         <div class="muted" style="font-size:.75rem">${g.n} bonific${g.n===1?'o':'i'} · ${fmtEur(g.tot)}<br>
         <span style="font-style:italic">«${escapeHtml(g.sample.slice(0,70))}»</span></div>
       </div>
       <select id="triage-${i}" data-cpnorm="${escapeHtml(g.cpNorm)}" style="width:auto;flex-shrink:0;max-width:230px">
-        <option value="later">📥 Decido dopo (bonifici da assegnare)</option>
+        <option value="later" ${guess?'':'selected'}>📥 Decido dopo (bonifici da assegnare)</option>
         <option value="create">➕ Nuovo inquilino: crealo</option>
-        ${tenantOptionsHtml()}
+        ${opts}
         <option value="ignore">🚫 Non è un inquilino: scarta per sempre</option>
       </select>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   $('triage-count').textContent = groups.length;
   openModal('triagemodal');
 }
@@ -1282,6 +1315,7 @@ function triageConfirm(){
     } else if (sel.value==='create'){
       const t = createTenant(cpNorm, display, pendingImport.ownerId);
       if (sb) dbUpsertTenants([t]);
+      tenantQueue.push(t.id);   // a fine import si apre la scheda per completarla
     } else if (sel.value.startsWith('assign:')){
       const t = state.tenants[sel.value.slice(7)];
       if (t){
@@ -1319,10 +1353,29 @@ function finishImport(list, ownerId, skipped){
     ` · ${res.dups} duplicati scartati` +
     (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti scartati` : '') +
     (skipped ? ` · ${skipped} righe non in entrata` : '') + '.');
-  // acconti/anticipi con competenza dubbia: chiedi prima di passare al file successivo
+  // sequenza post-import: 1) competenze dubbie → 2) schede dei nuovi inquilini da completare → 3) file successivo
+  importFlowActive = true;
   const amb = detectAmbiguous(res.newMovKeys);
   if (amb.length) openRefModal(amb);
-  else processNextFile();
+  else continueAfterImport();
+}
+
+let tenantQueue = [];          // schede di nuovi inquilini da completare a fine import
+let importFlowActive = false;
+
+function continueAfterImport(){
+  if (tenantQueue.length){
+    const id = tenantQueue.shift();
+    if (state.tenants[id]){
+      showToast('Completa la scheda del nuovo inquilino: fitto mensile, indirizzo, proprietario.');
+      openTenant(id);          // alla chiusura la sequenza riprende (vedi closeModal)
+      return;
+    }
+    continueAfterImport();
+    return;
+  }
+  importFlowActive = false;
+  processNextFile();
 }
 
 /* ---- dialogo mese di competenza ---- */
@@ -1359,7 +1412,7 @@ function refConfirm(){
   if (sb && changed.length) dbUpsertMovs(changed);
   closeModal('refmodal');
   renderAll();
-  processNextFile();
+  if (importFlowActive) continueAfterImport();
 }
 
 /* ---------------- Rendering ---------------- */
@@ -1514,6 +1567,7 @@ function renderPanoramica(){
     <span><span class="dot" style="background:var(--ok)"></span> Pagato</span>
     <span><span class="dot" style="background:var(--warn)"></span> Parziale (meno dell'atteso)</span>
     <span><span class="dot" style="background:var(--bad)"></span> Mancante</span>
+    <span><span class="dot" style="background:var(--lav)"></span> Quota di bonifico multi-mese</span>
     <span><span class="dot" style="background:var(--na)"></span> Fuori periodo</span>
   </div>`;
   if (!tenants.length){
@@ -1521,12 +1575,24 @@ function renderPanoramica(){
     return;
   }
   const manyOwners = Object.keys(state.owners).length>1 && ui.owner==='all';
+  // quote di bonifici multi-mese per cella: colore dedicato + tooltip col bonifico originale
+  const splitTips = {};
+  for (const m of activeMovements()){
+    if (!m.tenantId || !m.splits || !m.splits.length) continue;
+    for (const s of m.splits){
+      const k = m.tenantId + '|' + s.ym;
+      (splitTips[k] = splitTips[k] || []).push(
+        `Quota ${fmtEur(s.amount)} di un bonifico da ${fmtEur(m.amount)} ricevuto il ${m.date.split('-').reverse().join('/')} (${m.splits.length} mensilità)`);
+    }
+  }
   const cellFor = (t, ym) => {
     const sum = sums[t.id]?.[ym] || 0;
     const before = firstMonth[t.id] && ym < firstMonth[t.id];
     const future = ym > curYM;
     const afterCeased = t.ceased && sum<=0 && ym > (lastMonthOf(t.id)||'0000');
-    return { sum, cls: cellClass(sum, t.expected, future || afterCeased, before) };
+    const tips = splitTips[t.id + '|' + ym];
+    return { sum, cls: cellClass(sum, t.expected, future || afterCeased, before),
+             split: !!tips, tip: tips ? tips.join('\n') : '' };
   };
   // vista desktop: griglia mesi × inquilini
   html += `<div class="only-desktop"><div class="tablewrap"><table class="gridtable"><tr><th>Inquilino</th>`;
@@ -1541,7 +1607,8 @@ function renderPanoramica(){
       const star = marks.has(t.id+'|'+ym) ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
       const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum)+star : '✗');
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
-      html += `<td><span class="cell ${c.cls}"${click}>${label}</span></td>`;
+      const isSplit = c.split && c.cls!=='na';
+      html += `<td><span class="cell ${c.cls}${isSplit?' split':''}"${click}${isSplit?` data-tip="${escapeHtml(c.tip)}"`:''}>${label}</span></td>`;
     }
     html += '</tr>';
   }
@@ -1563,7 +1630,7 @@ function renderPanoramica(){
       const c = cellFor(t, ym);
       const star = marks.has(t.id+'|'+ym) ? '✱' : '';
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
-      html += `<span class="chipmese ${c.cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
+      html += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
     }
     html += '</div></div>';
   }
@@ -1844,9 +1911,12 @@ function renderMovimenti(){
   let html = `<h2>Movimenti in entrata (${movs.length})</h2>
   <div class="searchbar"><input type="text" id="movsearch" placeholder="🔍 Cerca per ordinante o causale…" oninput="filterMovs(this.value)"></div>
   <div class="card" style="padding:6px 14px" id="movlist">`;
+  const ownersAll = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
   for (const m of movs){
     const opts = (m.tenantId?'':'<option value="" selected>— da assegnare —</option>') +
       tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
+    const ownOpts = '<option value="">👤 —</option>' +
+      ownersAll.map(o=>`<option value="${o.id}" ${o.id===m.ownerId?'selected':''}>👤 ${escapeHtml(o.name)}</option>`).join('');
     html += `<div class="mrow" data-search="${escapeHtml((m.cp+' '+m.desc).toLowerCase())}">
       <div style="min-width:0">
         <b>${escapeHtml(m.cp)}</b> <span class="muted">· ${m.date.split('-').reverse().join('/')}</span>
@@ -1857,7 +1927,8 @@ function renderMovimenti(){
         ${m.autoRef?'<span class="badge ok" title="competenza letta dalla causale">✱</span>':''}
         ${(m.splits&&m.splits.length)?`<span class="badge warn">${m.splits.length} mesi</span>`:''}
         <span class="amount pos">${fmtEur(m.amount)}</span>
-        <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="reassign('${m.key}', this.value)" title="Assegna a…">${opts}</select>
+        <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="reassign('${m.key}', this.value)" title="Assegna a inquilino…">${opts}</select>
+        <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="changeMovOwner('${m.key}', this.value)" title="Proprietario di questo fitto">${ownOpts}</select>
         ${m.manual?`<button class="delbtn" title="Elimina pagamento manuale" onclick="deleteManual('${m.key}')">🗑</button>`:''}
       </div>
     </div>`;
@@ -1871,6 +1942,16 @@ function filterMovs(q){
   document.querySelectorAll('#movlist .mrow').forEach(r=>{
     r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none';
   });
+}
+
+/* Cambio del proprietario su un singolo fitto/movimento */
+function changeMovOwner(key, ownerId){
+  const m = state.movements[key];
+  if (!m) return;
+  m.ownerId = ownerId || null;
+  if (sb) dbUpsertMovs([m]);
+  renderAll();
+  showToast('Proprietario del movimento aggiornato.');
 }
 
 function reassign(key, newTenantId){
@@ -2009,7 +2090,11 @@ function openCell(tenantId, ym){
 }
 
 function openModal(id){ $(id).classList.add('open'); }
-function closeModal(id){ $(id).classList.remove('open'); }
+function closeModal(id){
+  $(id).classList.remove('open');
+  // durante un import, alla chiusura di una scheda inquilino riprende la sequenza
+  if (id==='tenantmodal' && importFlowActive) setTimeout(continueAfterImport, 60);
+}
 
 /* ---------------- Pagamento manuale (contanti ecc.) ---------------- */
 
@@ -2281,7 +2366,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
-    assignGroupCore, unassignedMovements, createTenant,
+    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
