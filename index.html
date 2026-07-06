@@ -363,7 +363,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.2.1';
+const APP_VERSION = 'v2.3';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1594,29 +1594,43 @@ function renderPanoramica(){
     return { sum, cls: cellClass(sum, t.expected, future || afterCeased, before),
              split: !!tips, tip: tips ? tips.join('\n') : '' };
   };
-  // vista desktop: griglia mesi × inquilini
-  html += `<div class="only-desktop"><div class="tablewrap"><table class="gridtable"><tr><th>Inquilino</th>`;
-  for (const ym of months) html += `<th>${monthLabel(ym)}</th>`;
-  html += '</tr>';
-  for (const t of tenants){
-    const own = manyOwners && ownerName(t.ownerId) ? `<span class="muted" style="font-size:.65rem;font-weight:400"> · ${escapeHtml(ownerName(t.ownerId))}</span>` : '';
+  // raggruppamento per proprietario: una sezione per ciascuno, in coda chi non ne ha uno
+  const groups = [];
+  for (const o of Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'))){
+    const list = tenants.filter(t=>t.ownerId===o.id);
+    if (list.length) groups.push({ label: o.name, list });
+  }
+  const senza = tenants.filter(t=>!t.ownerId || !state.owners[t.ownerId]);
+  if (senza.length) groups.push({ label: 'Senza proprietario', list: senza });
+
+  const headRow = `<tr><th>Inquilino</th>${months.map(ym=>`<th>${monthLabel(ym)}</th>`).join('')}</tr>`;
+  const rowFor = t => {
     const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
-    html += `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${own}${t.expected?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(t.expected)}</div>`:''}</td>`;
+    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${t.expected?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(t.expected)}</div>`:''}</td>`;
     for (const ym of months){
       const c = cellFor(t, ym);
       const star = marks.has(t.id+'|'+ym) ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
       const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum)+star : '✗');
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
       const isSplit = c.split && c.cls!=='na';
-      html += `<td><span class="cell ${c.cls}${isSplit?' split':''}"${click}${isSplit?` data-tip="${escapeHtml(c.tip)}"`:''}>${label}</span></td>`;
+      r += `<td><span class="cell ${c.cls}${isSplit?' split':''}"${click}${isSplit?` data-tip="${escapeHtml(c.tip)}"`:''}>${label}</span></td>`;
     }
-    html += '</tr>';
+    return r + '</tr>';
+  };
+
+  // vista desktop: una griglia mesi × inquilini per ogni proprietario
+  html += '<div class="only-desktop">';
+  for (const g of groups){
+    html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span></h3>`;
+    html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(rowFor).join('')}</table></div>`;
   }
-  html += '</table></div></div>';
-  // vista mobile: card per inquilino con chip mensili scorrevoli
+  html += '</div>';
+  // vista mobile: card per inquilino con chip mensili scorrevoli, raggruppate per proprietario
   html += '<div class="only-mobile">';
-  for (const t of tenants){
-    const own = manyOwners && ownerName(t.ownerId) ? ` · ${escapeHtml(ownerName(t.ownerId))}` : '';
+  for (const g of groups){
+    html += `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
+  for (const t of g.list){
+    const own = '';
     const cur = cellFor(t, curYM);
     const curBadge = t.ceased ? '<span class="badge na">cessato</span>'
       : cur.cls==='ok' ? '<span class="badge ok">✓ questo mese</span>'
@@ -1633,6 +1647,7 @@ function renderPanoramica(){
       html += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
     }
     html += '</div></div>';
+  }
   }
   html += '</div>';
   el.innerHTML = html;
