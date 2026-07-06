@@ -363,7 +363,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.3.1';
+const APP_VERSION = 'v2.4';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1179,7 +1179,62 @@ function startMapping(rows){
   openModal('mapmodal');
 }
 
-function confirmImport(){
+/* ---- Analisi IA dei bonifici (API Claude via edge function protetta) ----
+   Applica i suggerimenti su abbinamento inquilino e mese di competenza;
+   ogni proposta resta soggetta a conferma nel triage / dialogo competenze. */
+let aiSuggestByCp = {};   // cpNorm → inquilino_id proposto dall'IA
+
+async function analisiIA(list){
+  aiSuggestByCp = {};
+  if (!sb) return;
+  // manda all'IA solo ciò che il riconoscimento locale non ha già risolto
+  const daAnalizzare = list.filter(mv => classifyCp(mv.cpNorm)==='new' || !mv.autoRef);
+  if (!daAnalizzare.length) return;
+  showToast('🤖 Analisi IA dei bonifici in corso…');
+  let data = null;
+  try {
+    const res = await sb.functions.invoke('analizza-bonifici', { body: {
+      movimenti: daAnalizzare.map(mv => ({ chiave: dedupKey(mv.date, mv.amount, mv.cpNorm),
+        data: mv.date, importo: mv.amount, descrizione: mv.desc, ordinante: mv.cp })),
+      inquilini: Object.values(state.tenants).filter(t=>!t.ceased).map(t => ({ id: t.id, nome: t.name, atteso: t.expected }))
+    }});
+    if (res.error) throw res.error;
+    data = res.data;
+  } catch(e){
+    showToast('Analisi IA non disponibile: uso il riconoscimento integrato.');
+    return;
+  }
+  if (data && data.errore === 'chiave_mancante'){
+    showToast('IA non configurata (manca ANTHROPIC_API_KEY nei secrets Supabase): uso il riconoscimento integrato.');
+    return;
+  }
+  if (!data || !Array.isArray(data.risultati)) return;
+  const byKey = {};
+  for (const r of data.risultati) if (r && r.chiave) byKey[r.chiave] = r;
+  let applicati = 0;
+  for (const mv of daAnalizzare){
+    const r = byKey[dedupKey(mv.date, mv.amount, mv.cpNorm)];
+    if (!r || (r.confidenza ?? 0) < 0.6) continue;
+    // suggerimento inquilino: preselezionato nel triage, da confermare
+    if (r.inquilino_id && state.tenants[r.inquilino_id]) aiSuggestByCp[mv.cpNorm] = r.inquilino_id;
+    // mesi di competenza: applicati solo se il parser locale non aveva già deciso
+    const mesi = (r.mesi || []).filter(m => /^\d{4}-\d{2}$/.test(m));
+    if (!mv.autoRef && mesi.length === 1){
+      mv.autoRef = true;
+      if (mesi[0] !== mv.date.slice(0,7)) mv.refMonth = mesi[0];
+      applicati++;
+    } else if (!mv.autoRef && mesi.length > 1 && mesi.length <= 6){
+      mv.autoRef = true;
+      const q = Math.round(mv.amount / mesi.length * 100) / 100;
+      mv.splits = mesi.map((ym,i)=>({ ym, amount: i===mesi.length-1 ? Math.round((mv.amount - q*(mesi.length-1))*100)/100 : q }));
+      applicati++;
+    }
+  }
+  if (applicati || Object.keys(aiSuggestByCp).length)
+    showToast(`🤖 IA: ${Object.keys(aiSuggestByCp).length} abbinamenti proposti · ${applicati} competenze suggerite. Conferma nei prossimi passaggi.`);
+}
+
+async function confirmImport(){
   const gv = id => parseInt(document.getElementById(id).value, 10);
   const ci = { date: gv('map-date'), amount: gv('map-amount'), inflow: gv('map-in'), outflow: gv('map-out'), desc: gv('map-desc'), cp: gv('map-cp') };
   if (ci.date<0){ showToast('Seleziona la colonna della data.'); return; }
@@ -1255,6 +1310,9 @@ function confirmImport(){
   closeModal('mapmodal');
   pendingRows = null;
 
+  // analisi IA (se configurata): propone abbinamenti e competenze prima del triage
+  await analisiIA(list);
+
   // Triage: gli ordinanti che non corrispondono a nessun inquilino in anagrafica
   const newGroups = {};
   for (const mv of list){
@@ -1281,7 +1339,10 @@ function tenantOptionsHtml(){
 function showTriage(groups){
   const body = $('triage-body');
   body.innerHTML = groups.map((g,i)=>{
-    const guess = bestTenantGuess(g.cpNorm);   // proposta di abbinamento da confermare
+    // proposta: prima l'IA (se ha analizzato), poi il motore integrato
+    const guess = (aiSuggestByCp[g.cpNorm] && state.tenants[aiSuggestByCp[g.cpNorm]])
+      ? state.tenants[aiSuggestByCp[g.cpNorm]]
+      : bestTenantGuess(g.cpNorm);
     const opts = Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'))
       .map(t=>`<option value="assign:${t.id}" ${guess&&t.id===guess.id?'selected':''}>→ Assegna a: ${escapeHtml(t.name)}${guess&&t.id===guess.id?' (proposto)':''}</option>`).join('');
     return `
