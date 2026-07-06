@@ -99,6 +99,8 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .amount{font-variant-numeric:tabular-nums;font-weight:600}
 .pos{color:var(--ok-ink)}
 .actionsrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.nico{display:none}
+.navbadge{background:#E5484D;color:#fff;border-radius:999px;padding:1px 7px;font-size:.62rem;font-weight:700}
 .badge.man{background:#e8e5fb;color:#5b47c9}
 .delbtn{background:none;border:none;cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:6px}
 .delbtn:hover{background:var(--bad)}
@@ -114,18 +116,32 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 @media(min-width:641px){ .only-mobile{display:none} }
 @media(max-width:640px){
   .only-desktop{display:none}
-  header{padding:10px 12px}
-  header h1{font-size:1rem}
-  nav{width:100%;justify-content:space-between;margin-left:0}
-  nav button{padding:9px 8px;font-size:.82rem}
+  header{padding:10px 12px;gap:6px}
+  header h1{font-size:.95rem}
+  .privacy{margin-left:auto}
+  /* Navigazione in basso, stile app: pollice-friendly */
+  nav{position:fixed;bottom:0;left:0;right:0;margin:0;background:var(--dark);display:flex;justify-content:space-around;gap:0;
+      padding:6px 2px calc(8px + env(safe-area-inset-bottom));z-index:80;border-top:1px solid #2A2A2E}
+  nav button{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0;padding:6px 2px;font-size:.6rem;line-height:1.1;border-radius:10px}
+  nav button span:last-child{overflow:hidden;text-overflow:ellipsis;max-width:100%;white-space:nowrap}
+  .nico{display:block;font-size:1.35rem}
   .row2{grid-template-columns:1fr}
-  main{padding:12px 8px 104px}
-  .btn{padding:12px 16px}
-  .btn.small{padding:9px 12px}
-  input[type=text],input[type=number],input[type=date],select{padding:12px 11px;font-size:16px} /* 16px evita lo zoom automatico di iOS */
+  main{padding:12px 8px 130px}
+  .btn{padding:14px 18px;font-size:1rem;border-radius:12px}
+  .btn.small{padding:12px 14px;font-size:.9rem}
+  .delbtn{font-size:1.25rem;padding:8px 10px}
+  input[type=text],input[type=number],input[type=date],input[type=month],input[type=email],input[type=password],select{padding:13px 12px;font-size:16px} /* 16px evita lo zoom automatico di iOS */
   .toolbar select,.toolbar input{flex:1 1 45%}
-  .modal{padding:16px}
-  .mrow{flex-wrap:wrap}
+  .modal{padding:16px;border-radius:16px}
+  .mrow{flex-wrap:wrap;padding:11px 2px}
+  .cell{min-width:64px;padding:9px 8px;font-size:.85rem}
+  .chipmese{min-width:64px;padding:10px 6px;font-size:.75rem}
+  .chipmese b{font-size:.85rem}
+  .tcard{padding:16px}
+  .badge{font-size:.72rem;padding:4px 9px}
+  h2{font-size:1.15rem}
+  footer{position:static;background:none;border:none;padding:14px 10px calc(84px + env(safe-area-inset-bottom));justify-content:flex-start}
+  footer button{font-size:.85rem;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:9px}
 }
 </style>
 </head>
@@ -149,17 +165,21 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <h1>GALLO HOLDING <small>· Affitti</small></h1>
   <span class="privacy">🔒 accesso riservato</span>
   <nav>
-    <button data-view="panoramica" class="active">Panoramica</button>
-    <button data-view="inquilini">Inquilini</button>
-    <button data-view="movimenti">Movimenti</button>
-    <button data-view="importa" style="color:#B7BBEF;font-weight:700">+ Importa</button>
+    <button data-view="panoramica" class="active"><span class="nico">📊</span><span>Panoramica</span></button>
+    <button data-view="inquilini"><span class="nico">👥</span><span>Anagrafica</span></button>
+    <button data-view="daassegnare" id="nav-daassegnare"><span class="nico">📥</span><span>Da assegnare</span></button>
+    <button data-view="movimenti"><span class="nico">📄</span><span>Movimenti</span></button>
+    <button data-view="log"><span class="nico">🕘</span><span>Log</span></button>
+    <button data-view="importa" style="color:#B7BBEF;font-weight:700"><span class="nico">⬆️</span><span>Importa</span></button>
   </nav>
 </header>
 
 <main>
   <div id="view-panoramica"></div>
   <div id="view-inquilini" style="display:none"></div>
+  <div id="view-daassegnare" style="display:none"></div>
   <div id="view-movimenti" style="display:none"></div>
+  <div id="view-log" style="display:none"></div>
   <div id="view-importa" style="display:none">
     <div class="card">
       <h2>Importa estratto conto</h2>
@@ -246,7 +266,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 <div class="modal-bg" id="triagemodal">
   <div class="modal" style="max-width:560px">
     <h2>Nuovi ordinanti trovati (<span id="triage-count"></span>)</h2>
-    <p class="muted" style="margin-top:6px">Per ogni ordinante mai visto prima, indica se è un inquilino. Se scegli "No, ignora", i suoi bonifici futuri verranno accantonati automaticamente senza chiedertelo di nuovo (scelta reversibile dalla sezione Inquilini).</p>
+    <p class="muted" style="margin-top:6px">Questi ordinanti non corrispondono a nessun inquilino in anagrafica. Per ciascuno: creane la scheda, assegnalo a un inquilino esistente (l'associazione verrà ricordata), scartalo per sempre, oppure decidi dopo dal tab "Da assegnare".</p>
     <div id="triage-body" style="margin-top:12px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 12px"></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn secondary" onclick="triageCancel()">Annulla import</button>
@@ -263,6 +283,8 @@ footer button:hover{background:var(--bg);color:var(--ink)}
       <div><label>Nome inquilino</label><input type="text" id="tm-name"></div>
       <div><label>Affitto mensile atteso (€)</label><input type="number" id="tm-expected" min="0" step="10" placeholder="es. 750"></div>
     </div>
+    <label>Indirizzo immobile</label>
+    <input type="text" id="tm-address" placeholder="es. Via Roma 12, int. 3">
     <div class="row2">
       <div><label>Proprietario</label><select id="tm-owner"></select></div>
       <div><label>Stato</label><button class="btn secondary small" id="tm-ceased" style="margin-top:2px;width:100%"></button></div>
@@ -311,7 +333,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 let sb = null;          // client Supabase
 let appStarted = false;
 
-let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, nextId: 1 };
+let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi' };
 
@@ -700,9 +722,9 @@ function dbErr(r){
 const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:m.desc||'',
   ordinante:m.cp||'', ordinante_norm:m.cpNorm||'', inquilino_id:m.tenantId||null,
   proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null,
-  suddivisione:m.splits||null, auto_competenza:!!m.autoRef });
+  suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
-  proprietario_id:t.ownerId||null, alias:t.aliases||[] });
+  proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null });
 
 const dbUpsertOwner    = o    => sb.from('proprietari').upsert({id:o.id, nome:o.name}).then(dbErr);
 const dbUpsertTenants  = arr  => arr.length ? sb.from('inquilini').upsert(arr.map(tenRow)).then(dbErr) : Promise.resolve();
@@ -713,22 +735,25 @@ const dbUpsertIgnored  = g    => sb.from('ordinanti_ignorati').upsert({ordinante
 const dbDeleteIgnored  = norm => sb.from('ordinanti_ignorati').delete().eq('ordinante_norm', norm).then(dbErr);
 
 async function loadAll(){
-  const [p,i,m,g] = await Promise.all([
+  const [p,i,m,g,il] = await Promise.all([
     sb.from('proprietari').select('*'),
     sb.from('inquilini').select('*'),
     sb.from('movimenti').select('*'),
-    sb.from('ordinanti_ignorati').select('*')
+    sb.from('ordinanti_ignorati').select('*'),
+    sb.from('import_log').select('*')
   ]);
-  for (const r of [p,i,m,g]) if (r.error) throw r.error;
-  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, nextId:1 };
+  for (const r of [p,i,m,g,il]) if (r.error) throw r.error;
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
   p.data.forEach(r => state.owners[r.id] = { id:r.id, name:r.nome });
   i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
-    ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], hidden:false });
+    ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], address:r.indirizzo||'', hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
     ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
-    splits:r.suddivisione||null, autoRef:!!r.auto_competenza });
+    splits:r.suddivisione||null, autoRef:!!r.auto_competenza, importId:r.import_id||null });
   g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
+  il.data.forEach(r => state.importLog[r.id] = { id:r.id, file:r.nome_file, quando:r.quando,
+    ownerId:r.proprietario_id, added:r.aggiunti, dups:r.duplicati, ignoredCount:r.accantonati, unassigned:r.da_assegnare });
   // memoria dei formati file già confermati
   state.mappings = {};
   const mp = await sb.from('mappature').select('*');
@@ -785,19 +810,22 @@ async function startApp(){
 /* ---------------- Logica inquilini ---------------- */
 
 function findTenantFor(cpNorm){
-  const matches = [];
   for (const t of Object.values(state.tenants)){
-    if (t.aliases.includes(cpNorm)) return t;           // corrispondenza esatta
+    if (t.aliases.includes(cpNorm)) return t;           // corrispondenza esatta (già associato in passato)
   }
-  for (const t of Object.values(state.tenants)){
-    if (t.aliases.some(a=>namesCompatible(a, cpNorm))) matches.push(t);
-  }
+  // matching flessibile su alias E nome anagrafico ("Mario Rossi" ↔ "ROSSI MARIO")
+  const matches = Object.values(state.tenants).filter(t =>
+    t.aliases.some(a=>namesCompatible(a, cpNorm)) || namesCompatible(normName(t.name), cpNorm));
   return matches.length===1 ? matches[0] : null;        // se ambiguo, meglio non indovinare
+}
+
+function unassignedMovements(){
+  return Object.values(state.movements).filter(m=>!m.ignored && !m.tenantId);
 }
 
 function createTenant(cpNorm, displayName, ownerId){
   const id = newId('t-');
-  state.tenants[id] = { id, name: titleCase(displayName || cpNorm), expected: null, aliases: [cpNorm], hidden: false, ceased: false, ownerId: ownerId || null };
+  state.tenants[id] = { id, name: titleCase(displayName || cpNorm), expected: null, aliases: cpNorm?[cpNorm]:[], address:'', hidden: false, ceased: false, ownerId: ownerId || null };
   return state.tenants[id];
 }
 
@@ -920,43 +948,47 @@ function promoteIgnored(cpNorm){
   showToast(`${res.tenant.name} promosso a inquilino: recuperati ${res.recovered} movimenti storici.`);
 }
 
-function importMovements(list, ownerId){
-  let added = 0, dups = 0, newTenants = 0, ignoredCount = 0;
+function importMovements(list, ownerId, importId){
+  let added = 0, dups = 0, ignoredCount = 0, unassigned = 0;
   const newMovKeys = [], touchedTenants = new Set();
   for (const mv of list){
     const key = dedupKey(mv.date, mv.amount, mv.cpNorm);
     if (state.movements[key]){ dups++; continue; }
-    // ordinante in lista ignorati: il movimento viene accantonato senza domande
-    // (resta recuperabile se in futuro l'ordinante viene promosso a inquilino)
-    if (!findTenantFor(mv.cpNorm) && findIgnoredFor(mv.cpNorm)){
-      state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: null, ownerId: ownerId || null, ignored: true,
-        refMonth: mv.refMonth || null, splits: mv.splits || null, autoRef: !!mv.autoRef };
-      newMovKeys.push(key);
-      ignoredCount++;
-      continue;
-    }
-    let tenant = findTenantFor(mv.cpNorm);
-    if (!tenant){ tenant = createTenant(mv.cpNorm, mv.cp, ownerId); newTenants++; }
-    else {
-      if (!tenant.aliases.includes(mv.cpNorm)) tenant.aliases.push(mv.cpNorm);
-      if (!tenant.ownerId && ownerId) tenant.ownerId = ownerId;   // non sovrascrive un'assegnazione esistente
-    }
-    touchedTenants.add(tenant.id);
-    state.movements[key] = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm, tenantId: tenant.id, ownerId: ownerId || null, ignored: false,
+    const base = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm,
+      ownerId: ownerId || null, importId: importId || null,
       refMonth: mv.refMonth || null, splits: mv.splits || null, autoRef: !!mv.autoRef };
+    const tenant = findTenantFor(mv.cpNorm);
+    if (tenant){
+      // abbinamento automatico (alias imparati o nome anagrafico compatibile)
+      if (!tenant.aliases.includes(mv.cpNorm)) tenant.aliases.push(mv.cpNorm);   // memoria per i prossimi import
+      touchedTenants.add(tenant.id);
+      state.movements[key] = { ...base, tenantId: tenant.id, ignored: false };
+      added++;
+    } else if (findIgnoredFor(mv.cpNorm)){
+      // ordinante scartato per sempre: accantonato senza domande
+      state.movements[key] = { ...base, tenantId: null, ignored: true };
+      ignoredCount++;
+    } else {
+      // nessun inquilino corrispondente: finisce tra i "bonifici da assegnare"
+      state.movements[key] = { ...base, tenantId: null, ignored: false };
+      unassigned++;
+    }
     newMovKeys.push(key);
-    added++;
   }
   saveState();
-  return { added, dups, newTenants, ignoredCount, newMovKeys, touchedTenants: [...touchedTenants] };
+  return { added, dups, ignoredCount, unassigned, newMovKeys, touchedTenants: [...touchedTenants] };
 }
 
-/* Propaga un import al database rispettando le dipendenze (proprietario → inquilini → movimenti) */
-async function persistImport(ownerId, res){
+/* Propaga un import al database rispettando le dipendenze (proprietario → inquilini → movimenti → log) */
+async function persistImport(ownerId, res, importId){
   if (!sb) return;
   if (ownerId && state.owners[ownerId]) await dbUpsertOwner(state.owners[ownerId]);
   await dbUpsertTenants(res.touchedTenants.map(id=>state.tenants[id]).filter(Boolean));
   await dbUpsertMovs(res.newMovKeys.map(k=>state.movements[k]).filter(Boolean));
+  const log = state.importLog[importId];
+  if (log) await sb.from('import_log').upsert({ id: log.id, nome_file: log.file, quando: log.quando,
+    proprietario_id: log.ownerId, aggiunti: log.added, duplicati: log.dups,
+    accantonati: log.ignoredCount, da_assegnare: log.unassigned }).then(dbErr);
 }
 
 /* ---------------- Pipeline di importazione file ---------------- */
@@ -1174,7 +1206,7 @@ function confirmImport(){
   closeModal('mapmodal');
   pendingRows = null;
 
-  // Triage: gli ordinanti MAI visti prima richiedono la conferma "È un inquilino?"
+  // Triage: gli ordinanti che non corrispondono a nessun inquilino in anagrafica
   const newGroups = {};
   for (const mv of list){
     if (classifyCp(mv.cpNorm)!=='new') continue;
@@ -1192,6 +1224,11 @@ function confirmImport(){
 
 let pendingImport = null;
 
+function tenantOptionsHtml(){
+  return Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'))
+    .map(t=>`<option value="assign:${t.id}">→ Assegna a: ${escapeHtml(t.name)}</option>`).join('');
+}
+
 function showTriage(groups){
   const body = $('triage-body');
   body.innerHTML = groups.map((g,i)=>`
@@ -1201,9 +1238,11 @@ function showTriage(groups){
         <div class="muted" style="font-size:.75rem">${g.n} bonific${g.n===1?'o':'i'} · ${fmtEur(g.tot)}<br>
         <span style="font-style:italic">«${escapeHtml(g.sample.slice(0,70))}»</span></div>
       </div>
-      <select id="triage-${i}" data-cpnorm="${escapeHtml(g.cpNorm)}" style="width:auto;flex-shrink:0">
-        <option value="tenant">✅ Sì, è un inquilino</option>
-        <option value="ignore">🚫 No, ignora</option>
+      <select id="triage-${i}" data-cpnorm="${escapeHtml(g.cpNorm)}" style="width:auto;flex-shrink:0;max-width:230px">
+        <option value="later">📥 Decido dopo (bonifici da assegnare)</option>
+        <option value="create">➕ Nuovo inquilino: crealo</option>
+        ${tenantOptionsHtml()}
+        <option value="ignore">🚫 Non è un inquilino: scarta per sempre</option>
       </select>
     </div>`).join('');
   $('triage-count').textContent = groups.length;
@@ -1213,12 +1252,23 @@ function showTriage(groups){
 function triageConfirm(){
   if (!pendingImport) return;
   document.querySelectorAll('#triage-body select').forEach(sel=>{
+    const cpNorm = sel.dataset.cpnorm;
+    const g = pendingImport.list.find(m=>m.cpNorm===cpNorm);
+    const display = titleCase(g ? g.cp : cpNorm);
     if (sel.value==='ignore'){
-      const cpNorm = sel.dataset.cpnorm;
-      const g = pendingImport.list.find(m=>m.cpNorm===cpNorm);
-      state.ignored[cpNorm] = { cpNorm, name: titleCase(g ? g.cp : cpNorm) };
+      state.ignored[cpNorm] = { cpNorm, name: display };
       if (sb) dbUpsertIgnored(state.ignored[cpNorm]);
+    } else if (sel.value==='create'){
+      const t = createTenant(cpNorm, display, pendingImport.ownerId);
+      if (sb) dbUpsertTenants([t]);
+    } else if (sel.value.startsWith('assign:')){
+      const t = state.tenants[sel.value.slice(7)];
+      if (t){
+        if (!t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
+        if (sb) dbUpsertTenants([t]);
+      }
     }
+    // 'later': resta tra i bonifici da assegnare
   });
   closeModal('triagemodal');
   finishImport(pendingImport.list, pendingImport.ownerId, pendingImport.skipped);
@@ -1233,15 +1283,20 @@ function triageCancel(){
 }
 
 function finishImport(list, ownerId, skipped){
-  const res = importMovements(list, ownerId);
-  persistImport(ownerId, res);
+  const importId = newId('imp-');
+  const res = importMovements(list, ownerId, importId);
+  if (res.added || res.dups || res.ignoredCount || res.unassigned){
+    state.importLog[importId] = { id: importId, file: currentFileName || 'import', quando: new Date().toISOString(),
+      ownerId: ownerId || null, added: res.added, dups: res.dups, ignoredCount: res.ignoredCount, unassigned: res.unassigned };
+  }
+  persistImport(ownerId, res, importId);
   renderAll();
-  switchView('panoramica');
+  switchView(res.unassigned ? 'daassegnare' : 'panoramica');
   const pfx = queueTotal > 1 ? `"${currentFileName}": ` : '';
-  showToast(pfx + `importati ${res.added} movimenti` +
-    (res.newTenants ? ` · ${res.newTenants} nuovi inquilini` : '') +
+  showToast(pfx + `abbinati ${res.added} movimenti` +
+    (res.unassigned ? ` · ${res.unassigned} da assegnare` : '') +
     ` · ${res.dups} duplicati scartati` +
-    (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti ignorati` : '') +
+    (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti scartati` : '') +
     (skipped ? ` · ${skipped} righe non in entrata` : '') + '.');
   // acconti/anticipi con competenza dubbia: chiedi prima di passare al file successivo
   const amb = detectAmbiguous(res.newMovKeys);
@@ -1517,13 +1572,18 @@ function renderInquilini(){
   if (!Object.keys(state.tenants).length){ el.innerHTML = '<div class="card empty">Nessun inquilino: verranno creati automaticamente al primo import.</div>'; return; }
   const sums = sumsByTenantMonth();
   const tenants = filteredTenants(sums);
-  let html = '<h2>Schede inquilini</h2>' + toolbarHtml() + '<div class="tenantgrid">';
+  let html = `<h2>Anagrafica</h2>
+  <div class="actionsrow">
+    <button class="btn small" onclick="newTenantManual()">➕ Nuovo inquilino</button>
+    <button class="btn small secondary" onclick="newOwnerManual()">➕ Nuovo proprietario</button>
+  </div>` + toolbarHtml() + '<div class="tenantgrid">';
   for (const t of tenants){
     const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
     const nMov = Object.values(state.movements).filter(m=>m.tenantId===t.id).length;
     const own = ownerName(t.ownerId);
     html += `<div class="tcard" onclick="openTenant('${t.id}')" style="${t.ceased?'opacity:.65':''}">
       <h3>${escapeHtml(t.name)} ${tenantBadge(t,sums)}</h3>
+      ${t.address?`<div class="muted" style="font-size:.75rem">🏠 ${escapeHtml(t.address)}</div>`:''}
       <div class="exp">${t.expected ? 'Affitto atteso: <b>'+fmtEur(t.expected)+'</b>/mese' : 'Affitto atteso non impostato'}${own?' · 👤 '+escapeHtml(own):''}</div>
       <div class="muted">${nMov} bonifici · totale <span class="amount pos">${fmtEur(tot)}</span></div>
       <div style="margin-top:9px">
@@ -1551,6 +1611,23 @@ function renderInquilini(){
   el.innerHTML = html;
 }
 
+function newTenantManual(){
+  const name = prompt('Nome e cognome dell\'inquilino:');
+  if (!name || !name.trim()) return;
+  const t = createTenant(normName(name), name.trim(), null);
+  if (sb) dbUpsertTenants([t]);
+  renderAll();
+  openTenant(t.id);   // completa fitto mensile, indirizzo, proprietario
+}
+
+function newOwnerManual(){
+  const name = prompt('Nome del proprietario (es. "Umberto" o "Conto Intesa Umberto"):');
+  if (!name || !name.trim()) return;
+  createOwner(name);
+  renderAll();
+  showToast('Proprietario creato: selezionalo negli import e nelle schede inquilino.');
+}
+
 function toggleCeased(id){
   const t = state.tenants[id];
   if (!t) return;
@@ -1558,6 +1635,129 @@ function toggleCeased(id){
   if (sb) dbUpsertTenants([t]);
   renderAll();
   showToast(t.ceased ? `${t.name} segnato come cessato: resta consultabile nel filtro "Cessati".` : `${t.name} riattivato.`);
+}
+
+/* ---------------- Bonifici da assegnare ---------------- */
+
+function assignGroupCore(cpNorm, tenantId){
+  const t = state.tenants[tenantId];
+  if (!t) return null;
+  if (!t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
+  const changed = [];
+  for (const m of Object.values(state.movements)){
+    if (!m.ignored && !m.tenantId && m.cpNorm===cpNorm){ m.tenantId = t.id; changed.push(m); }
+  }
+  return { tenant: t, changed };
+}
+
+function assignGroup(cpNorm, tenantId){
+  if (!tenantId) return;
+  const res = assignGroupCore(cpNorm, tenantId);
+  if (!res) return;
+  if (sb){ (async ()=>{ await dbUpsertTenants([res.tenant]); await dbUpsertMovs(res.changed); })(); }
+  renderAll();
+  showToast(`${res.changed.length} bonifici assegnati a ${res.tenant.name}. L'associazione verrà ricordata.`);
+  // competenza dubbia sui movimenti appena assegnati
+  const amb = detectAmbiguous(res.changed.map(m=>m.key));
+  if (amb.length) openRefModal(amb);
+}
+
+function createFromGroup(cpNorm){
+  const movs = unassignedMovements().filter(m=>m.cpNorm===cpNorm);
+  const display = titleCase(movs[0] ? movs[0].cp : cpNorm);
+  const name = prompt('Nome del nuovo inquilino:', display);
+  if (!name || !name.trim()) return;
+  const t = createTenant(cpNorm, name.trim(), null);
+  if (sb) dbUpsertTenants([t]);
+  assignGroup(cpNorm, t.id);
+  openTenant(t.id);   // per completare fitto atteso, indirizzo, proprietario
+}
+
+function ignoreGroup(cpNorm){
+  const movs = unassignedMovements().filter(m=>m.cpNorm===cpNorm);
+  const display = titleCase(movs[0] ? movs[0].cp : cpNorm);
+  if (!confirm(`Scartare per sempre "${display}"?\nI suoi bonifici, presenti e futuri, verranno accantonati automaticamente (reversibile dalla sezione Anagrafica → Ordinanti ignorati).`)) return;
+  state.ignored[cpNorm] = { cpNorm, name: display };
+  const changed = [];
+  for (const m of movs){ m.ignored = true; changed.push(m); }
+  if (sb){ (async ()=>{ await dbUpsertIgnored(state.ignored[cpNorm]); await dbUpsertMovs(changed); })(); }
+  renderAll();
+  showToast(`"${display}" scartato per sempre.`);
+}
+
+function renderDaAssegnare(){
+  const el = $('view-daassegnare');
+  const movs = unassignedMovements();
+  if (!movs.length){
+    el.innerHTML = '<div class="card empty"><div style="font-size:2rem">✅</div><p class="muted" style="margin-top:8px">Nessun bonifico da assegnare: tutto abbinato.</p></div>';
+    return;
+  }
+  const groups = {};
+  for (const m of movs){
+    const g = groups[m.cpNorm] = groups[m.cpNorm] || { cpNorm:m.cpNorm, cp:m.cp, n:0, tot:0, sample:m.desc, movs:[] };
+    g.n++; g.tot += m.amount; g.movs.push(m);
+  }
+  const tenants = Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  const opts = tenants.map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  let html = `<h2>Bonifici da assegnare</h2>
+  <p class="muted" style="margin-bottom:12px">Ordinanti che non corrispondono a nessun inquilino in anagrafica. Assegnali, crea l'inquilino, oppure scartali: la scelta viene ricordata per i prossimi import.</p>
+  <div class="tenantgrid">`;
+  for (const g of Object.values(groups).sort((a,b)=>b.tot-a.tot)){
+    html += `<div class="tcard" style="cursor:default">
+      <h3>${escapeHtml(titleCase(g.cp))}</h3>
+      <div class="muted" style="margin:4px 0">${g.n} bonific${g.n===1?'o':'i'} · <span class="amount pos">${fmtEur(g.tot)}</span></div>
+      <div class="muted" style="font-size:.72rem;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">«${escapeHtml(g.sample.slice(0,60))}»</div>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+        <select onchange="assignGroup('${escapeHtml(g.cpNorm)}', this.value)">
+          <option value="">→ Assegna a inquilino…</option>${opts}
+        </select>
+        <div style="display:flex;gap:8px">
+          <button class="btn small" style="flex:1" onclick="createFromGroup('${escapeHtml(g.cpNorm)}')">➕ Nuovo inquilino</button>
+          <button class="btn small danger" onclick="ignoreGroup('${escapeHtml(g.cpNorm)}')">🚫 Scarta</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html + '</div>';
+}
+
+/* ---------------- Log dei caricamenti ---------------- */
+
+function deleteImport(importId){
+  const log = state.importLog[importId];
+  if (!log) return;
+  const keys = Object.keys(state.movements).filter(k=>state.movements[k].importId===importId);
+  if (!confirm(`Annullare l'importazione "${log.file}" del ${new Date(log.quando).toLocaleString('it-IT')}?\nVerranno eliminati i suoi ${keys.length} movimenti (per tutti gli utenti). Gli inquilini in anagrafica restano.`)) return;
+  for (const k of keys) delete state.movements[k];
+  delete state.importLog[importId];
+  if (sb){
+    (async ()=>{
+      await sb.from('movimenti').delete().eq('import_id', importId).then(dbErr);
+      await sb.from('import_log').delete().eq('id', importId).then(dbErr);
+    })();
+  }
+  renderAll();
+  showToast(`Importazione annullata: rimossi ${keys.length} movimenti.`);
+}
+
+function renderLog(){
+  const el = $('view-log');
+  const logs = Object.values(state.importLog).sort((a,b)=>b.quando.localeCompare(a.quando));
+  if (!logs.length){ el.innerHTML = '<div class="card empty">Nessuna importazione registrata.</div>'; return; }
+  let html = `<h2>Log dei caricamenti</h2>
+  <p class="muted" style="margin-bottom:12px">Ogni riga è un file importato. Puoi annullare un'intera importazione: i suoi movimenti vengono eliminati (i duplicati scartati all'epoca non vengono ripristinati altrove).</p>
+  <div class="card" style="padding:6px 14px">`;
+  for (const l of logs){
+    const still = Object.values(state.movements).filter(m=>m.importId===l.id).length;
+    html += `<div class="mrow">
+      <div style="min-width:0">
+        <b>${escapeHtml(l.file)}</b> <span class="muted">· ${new Date(l.quando).toLocaleString('it-IT',{dateStyle:'short',timeStyle:'short'})}${l.ownerId&&ownerName(l.ownerId)?' · '+escapeHtml(ownerName(l.ownerId)):''}</span>
+        <div class="muted" style="font-size:.75rem">${l.added} abbinati · ${l.unassigned||0} da assegnare · ${l.dups} duplicati · ${l.ignoredCount||0} scartati · ${still} ancora presenti</div>
+      </div>
+      <button class="btn small danger" onclick="deleteImport('${l.id}')">🗑 Annulla</button>
+    </div>`;
+  }
+  el.innerHTML = html + '</div>';
 }
 
 function renderMovimenti(){
@@ -1569,7 +1769,8 @@ function renderMovimenti(){
   <div class="searchbar"><input type="text" id="movsearch" placeholder="🔍 Cerca per ordinante o causale…" oninput="filterMovs(this.value)"></div>
   <div class="card" style="padding:6px 14px" id="movlist">`;
   for (const m of movs){
-    const opts = tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
+    const opts = (m.tenantId?'':'<option value="" selected>— da assegnare —</option>') +
+      tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
     html += `<div class="mrow" data-search="${escapeHtml((m.cp+' '+m.desc).toLowerCase())}">
       <div style="min-width:0">
         <b>${escapeHtml(m.cp)}</b> <span class="muted">· ${m.date.split('-').reverse().join('/')}</span>
@@ -1598,7 +1799,7 @@ function filterMovs(q){
 
 function reassign(key, newTenantId){
   const mv = state.movements[key];
-  if (!mv || mv.tenantId===newTenantId) return;
+  if (!mv || !newTenantId || mv.tenantId===newTenantId) return;
   const target = state.tenants[newTenantId];
   const sameGroup = activeMovements().filter(m=>m.cpNorm===mv.cpNorm && m.tenantId!==newTenantId);
   let keys = [key];
@@ -1637,6 +1838,7 @@ function openTenant(id){
   editingTenantId = id;
   $('tm-name').value = t.name;
   $('tm-expected').value = t.expected || '';
+  $('tm-address').value = t.address || '';
   // proprietario
   const ows = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
   $('tm-owner').innerHTML = '<option value="">— nessuno —</option>' +
@@ -1687,6 +1889,7 @@ function saveTenant(){
   if (name) t.name = name;
   const exp = parseFloat($('tm-expected').value);
   t.expected = (!isNaN(exp) && exp>0) ? exp : null;
+  t.address = $('tm-address').value.trim();
   let ow = $('tm-owner').value;
   if (ow==='__new__'){
     const nn = prompt('Nome del nuovo proprietario:');
@@ -1885,14 +2088,20 @@ function showToast(msg){
 
 function switchView(v){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
-  for (const id of ['panoramica','inquilini','movimenti','importa'])
+  for (const id of ['panoramica','inquilini','daassegnare','movimenti','log','importa'])
     $('view-'+id).style.display = id===v ? '' : 'none';
 }
 
 function renderAll(){
   renderPanoramica();
   renderInquilini();
+  renderDaAssegnare();
   renderMovimenti();
+  renderLog();
+  // badge sul tab "Da assegnare"
+  const n = unassignedMovements().length;
+  const btn = $('nav-daassegnare');
+  if (btn) btn.innerHTML = `<span class="nico">📥</span><span>Da assegnare${n?` <span class="navbadge">${n}</span>`:''}</span>`;
 }
 
 function exportBackup(){
@@ -1910,9 +2119,10 @@ async function resetAll(){
     await sb.from('movimenti').delete().neq('chiave','').then(dbErr);
     await sb.from('inquilini').delete().neq('id','').then(dbErr);
     await sb.from('ordinanti_ignorati').delete().neq('ordinante_norm','').then(dbErr);
+    await sb.from('import_log').delete().neq('id','').then(dbErr);
     await sb.from('proprietari').delete().neq('id','').then(dbErr);
   }
-  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, nextId:1 };
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
   renderAll();
   showToast('Dati azzerati.');
 }
@@ -1970,6 +2180,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
+    assignGroupCore, unassignedMovements, createTenant,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
