@@ -250,6 +250,22 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   </div>
 </div>
 
+<!-- Modal azzeramento con ri-autenticazione -->
+<div class="modal-bg" id="resetmodal">
+  <div class="modal" style="max-width:440px">
+    <h2>⚠️ Azzera tutti i dati <button class="close" onclick="closeModal('resetmodal')">×</button></h2>
+    <p class="muted" style="margin-top:6px">Verranno eliminati <b>per tutti gli utenti</b>: inquilini, movimenti, proprietari, ordinanti scartati e log dei caricamenti. L'operazione <b>non è reversibile</b>.</p>
+    <p class="muted" style="margin-top:8px">Per sicurezza, conferma la tua password. Al termine verrai disconnesso e servirà un nuovo accesso.</p>
+    <label>Password di <span id="rst-email"></span></label>
+    <input type="password" id="rst-pw" autocomplete="current-password">
+    <div class="loginerr" id="rst-err"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" onclick="closeModal('resetmodal')">Annulla</button>
+      <button class="btn danger" id="rst-btn" onclick="confirmReset()">Elimina tutto</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal competenza acconti/anticipi -->
 <div class="modal-bg" id="refmodal">
   <div class="modal" style="max-width:560px">
@@ -1576,7 +1592,22 @@ function renderInquilini(){
   <div class="actionsrow">
     <button class="btn small" onclick="newTenantManual()">➕ Nuovo inquilino</button>
     <button class="btn small secondary" onclick="newOwnerManual()">➕ Nuovo proprietario</button>
-  </div>` + toolbarHtml() + '<div class="tenantgrid">';
+  </div>`;
+  // sezione proprietari
+  const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  if (owners.length){
+    html += '<div class="card" style="padding:12px 14px"><h3 style="margin-bottom:8px">👤 Proprietari</h3><div class="chips">';
+    for (const o of owners){
+      const nT = Object.values(state.tenants).filter(t=>t.ownerId===o.id).length;
+      html += `<span class="chip" style="display:inline-flex;align-items:center;gap:6px;padding:8px 12px">
+        <b>${escapeHtml(o.name)}</b><span class="muted">${nT} inquilin${nT===1?'o':'i'}</span>
+        <button class="delbtn" style="padding:2px 4px" title="Rinomina" onclick="renameOwner('${o.id}')">✏️</button>
+        <button class="delbtn" style="padding:2px 4px" title="Elimina" onclick="deleteOwner('${o.id}')">🗑</button>
+      </span>`;
+    }
+    html += '</div></div>';
+  }
+  html += toolbarHtml() + '<div class="tenantgrid">';
   for (const t of tenants){
     const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
     const nMov = Object.values(state.movements).filter(m=>m.tenantId===t.id).length;
@@ -1626,6 +1657,28 @@ function newOwnerManual(){
   createOwner(name);
   renderAll();
   showToast('Proprietario creato: selezionalo negli import e nelle schede inquilino.');
+}
+
+function renameOwner(id){
+  const o = state.owners[id];
+  if (!o) return;
+  const name = prompt('Nuovo nome del proprietario:', o.name);
+  if (!name || !name.trim()) return;
+  o.name = name.trim();
+  if (sb) dbUpsertOwner(o);
+  renderAll();
+}
+
+function deleteOwner(id){
+  const o = state.owners[id];
+  if (!o) return;
+  const used = Object.values(state.tenants).some(t=>t.ownerId===id) ||
+               Object.values(state.movements).some(m=>m.ownerId===id);
+  if (used){ showToast('Non eliminabile: ha inquilini o movimenti associati. Riassegnali prima.'); return; }
+  if (!confirm(`Eliminare il proprietario "${o.name}"?`)) return;
+  delete state.owners[id];
+  if (sb) sb.from('proprietari').delete().eq('id', id).then(dbErr);
+  renderAll();
 }
 
 function toggleCeased(id){
@@ -2112,19 +2165,43 @@ function exportBackup(){
   a.click();
 }
 
+/* Azzeramento totale: richiede la ri-autenticazione con password e al termine
+   disconnette la sessione (per sicurezza servono di nuovo le credenziali). */
 async function resetAll(){
-  if (!confirm('Cancellare TUTTI i dati (inquilini e movimenti) PER TUTTI GLI UTENTI? L\'operazione non è reversibile.')) return;
-  if (!confirm('Confermi davvero? Verrà svuotato il database condiviso.')) return;
-  if (sb){
-    await sb.from('movimenti').delete().neq('chiave','').then(dbErr);
-    await sb.from('inquilini').delete().neq('id','').then(dbErr);
-    await sb.from('ordinanti_ignorati').delete().neq('ordinante_norm','').then(dbErr);
-    await sb.from('import_log').delete().neq('id','').then(dbErr);
-    await sb.from('proprietari').delete().neq('id','').then(dbErr);
+  if (!sb) return;
+  const { data } = await sb.auth.getUser();
+  if (!data || !data.user){ showToast('Sessione scaduta: accedi di nuovo.'); return; }
+  $('rst-email').textContent = data.user.email;
+  $('rst-pw').value = '';
+  $('rst-err').textContent = '';
+  openModal('resetmodal');
+}
+
+async function confirmReset(){
+  const pw = $('rst-pw').value;
+  if (!pw){ $('rst-err').textContent = 'Inserisci la password.'; return; }
+  const btn = $('rst-btn');
+  btn.disabled = true; btn.textContent = 'Verifica…';
+  const { data } = await sb.auth.getUser();
+  const email = data && data.user ? data.user.email : null;
+  // ri-autenticazione esplicita prima dell'operazione distruttiva
+  const check = await sb.auth.signInWithPassword({ email, password: pw });
+  if (check.error){
+    btn.disabled = false; btn.textContent = 'Elimina tutto';
+    $('rst-err').textContent = 'Password errata: operazione annullata.';
+    return;
   }
+  btn.textContent = 'Eliminazione…';
+  await sb.from('movimenti').delete().neq('chiave','').then(dbErr);
+  await sb.from('inquilini').delete().neq('id','').then(dbErr);
+  await sb.from('ordinanti_ignorati').delete().neq('ordinante_norm','').then(dbErr);
+  await sb.from('import_log').delete().neq('id','').then(dbErr);
+  await sb.from('mappature').delete().neq('firma','').then(dbErr);
+  await sb.from('proprietari').delete().neq('id','').then(dbErr);
   state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
-  renderAll();
-  showToast('Dati azzerati.');
+  // disconnessione: per rientrare servono di nuovo le credenziali
+  await sb.auth.signOut();
+  location.reload();
 }
 
 /* ---------------- Init (solo browser) ---------------- */
