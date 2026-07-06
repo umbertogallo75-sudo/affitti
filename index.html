@@ -99,6 +99,9 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .amount{font-variant-numeric:tabular-nums;font-weight:600}
 .pos{color:var(--ok-ink)}
 .actionsrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.segmented{display:flex;background:#ECEBEE;border-radius:11px;padding:4px;gap:4px;margin-bottom:14px;max-width:420px}
+.segmented button{flex:1;border:none;background:none;padding:11px 10px;border-radius:8px;font-size:.95rem;font-weight:600;color:var(--muted);cursor:pointer}
+.segmented button.active{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .nico{display:none}
 .navbadge{background:#E5484D;color:#fff;border-radius:999px;padding:1px 7px;font-size:.62rem;font-weight:700}
 .badge.man{background:#e8e5fb;color:#5b47c9}
@@ -195,6 +198,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 </main>
 
 <footer>
+  <span class="muted" style="font-size:.7rem;align-self:center" id="appversion"></span>
   <button onclick="exportViewer()">📤 Condividi sola lettura</button>
   <button onclick="exportBackup()">💾 Esporta backup dati</button>
   <button onclick="resetAll()">🗑️ Azzera tutti i dati</button>
@@ -351,7 +355,8 @@ let appStarted = false;
 
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
-let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi' };
+let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
+const APP_VERSION = 'v2.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1589,24 +1594,39 @@ function renderInquilini(){
   const sums = sumsByTenantMonth();
   const tenants = filteredTenants(sums);
   let html = `<h2>Anagrafica</h2>
-  <div class="actionsrow">
-    <button class="btn small" onclick="newTenantManual()">➕ Nuovo inquilino</button>
-    <button class="btn small secondary" onclick="newOwnerManual()">➕ Nuovo proprietario</button>
+  <div class="segmented">
+    <button class="${ui.anagTab==='inquilini'?'active':''}" onclick="ui.anagTab='inquilini';renderInquilini()">👥 Inquilini</button>
+    <button class="${ui.anagTab==='proprietari'?'active':''}" onclick="ui.anagTab='proprietari';renderInquilini()">👤 Proprietari</button>
   </div>`;
-  // sezione proprietari
-  const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
-  if (owners.length){
-    html += '<div class="card" style="padding:12px 14px"><h3 style="margin-bottom:8px">👤 Proprietari</h3><div class="chips">';
-    for (const o of owners){
-      const nT = Object.values(state.tenants).filter(t=>t.ownerId===o.id).length;
-      html += `<span class="chip" style="display:inline-flex;align-items:center;gap:6px;padding:8px 12px">
-        <b>${escapeHtml(o.name)}</b><span class="muted">${nT} inquilin${nT===1?'o':'i'}</span>
-        <button class="delbtn" style="padding:2px 4px" title="Rinomina" onclick="renameOwner('${o.id}')">✏️</button>
-        <button class="delbtn" style="padding:2px 4px" title="Elimina" onclick="deleteOwner('${o.id}')">🗑</button>
-      </span>`;
+
+  // ---- sotto-scheda PROPRIETARI ----
+  if (ui.anagTab==='proprietari'){
+    html += `<div class="actionsrow"><button class="btn" onclick="newOwnerManual()">➕ Crea proprietario</button></div>`;
+    const owners = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+    if (!owners.length){
+      html += '<div class="card empty">Nessun proprietario: creane uno con il bottone qui sopra.</div>';
+    } else {
+      html += '<div class="tenantgrid">';
+      for (const o of owners){
+        const nT = Object.values(state.tenants).filter(t=>t.ownerId===o.id).length;
+        const nM = Object.values(state.movements).filter(m=>m.ownerId===o.id && !m.ignored).length;
+        html += `<div class="tcard" style="cursor:default">
+          <h3>👤 ${escapeHtml(o.name)}</h3>
+          <div class="muted" style="margin:4px 0 10px">${nT} inquilin${nT===1?'o':'i'} · ${nM} movimenti</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn small secondary" style="flex:1" onclick="renameOwner('${o.id}')">✏️ Rinomina</button>
+            <button class="btn small danger" onclick="deleteOwner('${o.id}')">🗑 Elimina</button>
+          </div>
+        </div>`;
+      }
+      html += '</div>';
     }
-    html += '</div></div>';
+    el.innerHTML = html;
+    return;
   }
+
+  // ---- sotto-scheda INQUILINI ----
+  html += `<div class="actionsrow"><button class="btn" onclick="newTenantManual()">➕ Crea inquilino</button></div>`;
   html += toolbarHtml() + '<div class="tenantgrid">';
   for (const t of tenants){
     const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
@@ -2207,6 +2227,7 @@ async function confirmReset(){
 /* ---------------- Init (solo browser) ---------------- */
 
 function init(){
+  $('appversion').textContent = APP_VERSION;
   // PWA: il service worker funziona solo su http(s); aperta come file locale l'app funziona comunque
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
