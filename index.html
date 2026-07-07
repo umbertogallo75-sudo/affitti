@@ -137,9 +137,40 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .chipmese.na{background:var(--na);color:var(--na-ink);cursor:default}
 .mcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px}
 .mcard h3{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.92rem}
+/* ---- Panoramica mobile: selettore mese + elenco stato inquilini ---- */
+.msel{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:6px 8px;margin:4px 0 8px;position:sticky;top:52px;z-index:30;box-shadow:0 2px 10px rgba(15,25,40,.08)}
+.msel b{font-size:1.08rem}
+.mselbtn{border:none;background:var(--bg);border-radius:10px;font-size:1.35rem;line-height:1;padding:9px 18px;color:var(--ink);cursor:pointer}
+.mselbtn:disabled{opacity:.25}
+.mselchips{display:flex;overflow-x:auto;gap:5px;padding:2px 0 8px;-webkit-overflow-scrolling:touch}
+.mselchip{flex-shrink:0;text-align:center;border-radius:9px;padding:6px 10px;font-size:.7rem;background:var(--card);border:1px solid var(--border);color:var(--muted);line-height:1.2;cursor:pointer}
+.mselchip.active{background:var(--dark);color:#fff;border-color:var(--dark);font-weight:700}
+.statpills{display:flex;gap:6px;margin:2px 0 10px}
+.statpill{flex:1;text-align:center;border-radius:11px;padding:10px 4px;font-size:.78rem;font-weight:700;border:2px solid transparent;cursor:pointer;line-height:1.25}
+.statpill.ok{background:var(--ok);color:var(--ok-ink)}
+.statpill.warn{background:var(--warn);color:var(--warn-ink)}
+.statpill.bad{background:var(--bad);color:var(--bad-ink)}
+.statpill.on{border-color:currentColor}
+.ghead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:16px 2px 7px;font-size:.85rem;font-weight:700}
+.ghead b{font-variant-numeric:tabular-nums;white-space:nowrap}
+.trow{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card);border:1px solid var(--border);border-left:6px solid var(--border);border-radius:12px;padding:13px 12px;margin-bottom:8px}
+.trow.ok{border-left-color:var(--ok-ink)}
+.trow.warn{border-left-color:var(--warn-ink)}
+.trow.bad{border-left-color:var(--bad-ink)}
+.trow.na{opacity:.7}
+.trow.grand{background:var(--dark);border-color:var(--dark);color:#fff;margin-top:12px}
+.trow.grand .trow-sub{color:#cbd3dd}
+.trow-main{min-width:0}
+.trow-name{font-weight:700;font-size:.95rem;overflow:hidden;text-overflow:ellipsis}
+.trow-sub{font-size:.72rem;color:var(--muted);margin-top:2px}
+.trow-amt{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:1rem;white-space:nowrap}
+.trow-amt .chev{color:var(--muted);font-size:1.25rem;line-height:1}
+.badink{color:var(--bad-ink)}
+.splitink{color:#383FA3}
 @media(min-width:641px){ .only-mobile{display:none} }
 @media(max-width:640px){
   .only-desktop{display:none}
+  .legend{display:none} /* su mobile lo stato è espresso a parole nei contatori e nelle righe */
   header{padding:10px 12px;gap:6px}
   header h1{font-size:.95rem}
   .privacy{margin-left:auto}
@@ -423,7 +454,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.1.1';
+const APP_VERSION = 'v3.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1830,6 +1861,16 @@ function monthLabel(ym){
   return MESI[+m-1] + ' ' + y.slice(2);
 }
 
+const MESI_FULL = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+function monthLabelFull(ym){
+  const [y,m] = ym.split('-');
+  return MESI_FULL[+m-1] + ' ' + y;
+}
+
+/* navigazione mese della panoramica mobile */
+function setMobMonth(ym){ if (!ym) return; ui.mobMonth = ym; renderPanoramica(); }
+function setMobStat(s){ ui.mobStat = (ui.mobStat===s ? 'all' : s); renderPanoramica(); }
+
 function sumsByTenantMonth(){
   const sums = {};
   for (const m of activeMovements()){
@@ -2006,6 +2047,20 @@ function renderPanoramica(){
     months.map(ym=>`<span class="chipmese" style="background:#fff"><b style="font-size:.7rem">${monthLabel(ym).split(' ')[0]}</b><br><b>${tot[ym]?Math.round(tot[ym])+'€':'—'}</b></span>`).join('') + '</div></div>';
   const grandTot = {};
 
+  // ---- mobile: mese selezionato con frecce ‹ › e striscia di mesi ----
+  if (!ui.mobMonth || !months.includes(ui.mobMonth)) ui.mobMonth = months.includes(curYM) ? curYM : months[months.length-1];
+  const selYM = ui.mobMonth;
+  const mselHtml = () => {
+    const i = months.indexOf(selYM);
+    const chips = months.map(ym=>`<span class="mselchip${ym===selYM?' active':''}" onclick="setMobMonth('${ym}')">${monthLabel(ym)}</span>`).join('');
+    return `<div class="msel">
+      <button class="mselbtn" ${i<=0?'disabled':''} onclick="setMobMonth('${months[i-1]||''}')" aria-label="mese precedente">‹</button>
+      <b>${monthLabelFull(selYM)}</b>
+      <button class="mselbtn" ${i>=months.length-1?'disabled':''} onclick="setMobMonth('${months[i+1]||''}')" aria-label="mese successivo">›</button>
+    </div><div class="mselchips">${chips}</div>`;
+  };
+  const ordStat = { bad:0, warn:1, ok:2, na:3 };
+
   // ---- vista PER IMMOBILE: somme e nomi dei paganti per cella ----
   const propSums = {};   // oid → propId('senza' se non collegato) → ym → somma
   const payNames = {};   // oid|propId|ym → nomi inquilini che hanno pagato
@@ -2027,7 +2082,7 @@ function renderPanoramica(){
   if (ui.vista === 'immobili'){
     const qn = normName(ui.q);
     html += '<div class="only-desktop">';
-    let mobileHtml = '<div class="only-mobile">';
+    let mobileHtml = '<div class="only-mobile">' + mselHtml();
     for (const g of groups){
       const bucketO = propSums[g.oid] || {};
       let pids = Object.keys(bucketO);
@@ -2046,7 +2101,7 @@ function renderPanoramica(){
       if (!pids.length) continue;
       const gTot = {};
       let rowsH = '';
-      let cardsH = `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
+      let mobRows = [];
       for (const pid of pids){
         const pr = state.properties[pid];
         const nome = pid==='senza' ? '— senza immobile —' : (pr ? pr.name : '?');
@@ -2059,7 +2114,6 @@ function renderPanoramica(){
         const inquiliniLbl = ts.length
           ? `<div class="muted" style="font-size:.65rem;font-weight:400">👥 ${ts.map(t=>t.ceased?escapeHtml(t.name):'<b>'+escapeHtml(t.name)+'</b>').join(', ')}</div>` : '';
         let r = `<tr><td title="${escapeHtml(nome)}">🏠 ${escapeHtml(nome)}${inquiliniLbl}</td>`;
-        let chips = '';
         for (const ym of months){
           const sum = s[ym] || 0;
           const before = mesiP.length ? ym < mesiP[0] : true;
@@ -2068,23 +2122,39 @@ function renderPanoramica(){
           const tip = who ? `Pagato da: ${[...who].join(', ')}` : '';
           const click = cls==='na' ? '' : ` onclick="openCellProp('${pid}','${ym}','${g.oid}')"`;
           r += `<td><span class="cell ${cls}"${click}${tip?` data-tip="${escapeHtml(tip)}"`:''}>${cls==='na'?'—':(sum>0?fmtEur(sum):'✗')}</span></td>`;
-          chips += `<span class="chipmese ${cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${cls==='na'?'—':(sum>0?Math.round(sum)+'€':'✗')}</b></span>`;
         }
         rowsH += r + '</tr>';
-        cardsH += `<div class="mcard"><h3>🏠 ${escapeHtml(nome)}</h3>${inquiliniLbl}<div class="monthchips">${chips}</div></div>`;
+        // riga mobile: solo il mese selezionato, grande e leggibile
+        const sumSel = s[selYM] || 0;
+        const beforeSel = mesiP.length ? selYM < mesiP[0] : true;
+        const clsSel = cellClass(sumSel, attesoP, selYM > curYM, beforeSel && sumSel<=0);
+        const whoSel = payNames[g.oid+'|'+pid+'|'+selYM];
+        const subParts = [];
+        if (ts.length) subParts.push('👥 ' + ts.map(t=>t.name).join(', '));
+        if (whoSel && sumSel>0) subParts.push('pagato da ' + [...whoSel].join(', '));
+        else if (attesoP) subParts.push('atteso ' + fmtEur(attesoP));
+        const amtSel = clsSel==='na' ? '<span class="muted">—</span>' : (sumSel>0 ? `<b>${fmtEur(sumSel)}</b>` : '<b class="badink">✗</b>');
+        const clickSel = clsSel==='na' ? '' : ` onclick="openCellProp('${pid}','${selYM}','${g.oid}')"`;
+        mobRows.push({ ord: ordStat[clsSel], html: `<div class="trow ${clsSel}"${clickSel}>
+          <div class="trow-main"><div class="trow-name">🏠 ${escapeHtml(nome)}</div>${subParts.length?`<div class="trow-sub">${escapeHtml(subParts.join(' · '))}</div>`:''}</div>
+          <div class="trow-amt">${amtSel}${clsSel!=='na'?'<span class="chev">›</span>':''}</div></div>` });
       }
       rowsH += totalRowHtml('Totale ' + g.label, gTot, 'totalrow');
       addInto(grandTot, gTot);
       html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)}</h3><div class="tablewrap"><table class="gridtable">${headRow}${rowsH}</table></div>`;
-      mobileHtml += cardsH + totChipsHtml('Totale ' + g.label, gTot);
+      mobRows.sort((a,b)=>a.ord-b.ord);
+      mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gTot[selYM]?fmtEur(gTot[selYM]):'—'}</b></div>` + mobRows.map(x=>x.html).join('');
     }
     html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
     html += '</div>';
-    mobileHtml += totChipsHtml('TOTALE ASSOLUTO', grandTot) + '</div>';
+    mobileHtml += `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div></div><div class="trow-amt"><b>${grandTot[selYM]?fmtEur(grandTot[selYM]):'—'}</b></div></div></div>`;
     el.innerHTML = html + mobileHtml;
-    // apertura sempre sull'ultimo periodo: scorri griglie e chip fino al mese più recente
-    el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+    // apertura sempre sull'ultimo periodo: scorri griglie fino al mese più recente e centra il mese attivo
     el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
+    el.querySelectorAll('.mselchips').forEach(c=>{
+      const a = c.querySelector('.active');
+      if (a) c.scrollLeft = a.offsetLeft - c.clientWidth/2 + a.clientWidth/2;
+    });
     return;
   }
 
@@ -2099,39 +2169,62 @@ function renderPanoramica(){
   }
   html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
   html += '</div>';
-  // vista mobile: card per inquilino con chip mensili scorrevoli, raggruppate per proprietario
-  html += '<div class="only-mobile">';
+  // ---- vista mobile PER INQUILINO: un mese alla volta, morosi in alto, contatori-filtro ----
+  html += '<div class="only-mobile">' + mselHtml();
+  const cnt = { ok:0, warn:0, bad:0 };
+  let grandSel = 0;
+  const groupData = [];
   for (const g of groups){
-    const gTotM = {};
-    for (const t of g.list) addInto(gTotM, (ownSums[g.oid]||{})[t.id]);
-    html += `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
-  for (const t of g.list){
-    const own = t.propertyId && propName(t.propertyId) ? ' · 🏠 ' + escapeHtml(propName(t.propertyId)) : '';
-    const cur = cellForOwner(t, curYM, g.oid);
-    const curBadge = t.ceased ? '<span class="badge na">cessato</span>'
-      : cur.cls==='ok' ? '<span class="badge ok">✓ questo mese</span>'
-      : cur.cls==='warn' ? '<span class="badge warn">△ parziale</span>'
-      : cur.cls==='bad' ? '<span class="badge bad">✗ non pagato</span>' : '';
-    html += `<div class="mcard">
-      <h3 onclick="openTenant('${t.id}')">${escapeHtml(t.name)} ${curBadge}</h3>
-      <div class="muted" style="font-size:.72rem;margin:2px 0 6px">${t.expected?'atteso '+fmtEur(t.expected)+'/mese':''}${own}</div>
-      <div class="monthchips">`;
-    for (const ym of months){
-      const c = cellForOwner(t, ym, g.oid);
-      const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '✱' : '';
-      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${g.oid}')"`;
-      html += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
+    let gSum = 0;
+    const rows = [];
+    for (const t of g.list){
+      const c = cellForOwner(t, selYM, g.oid);
+      if (c.cls!=='na'){ cnt[c.cls]++; gSum += c.sum; }
+      rows.push({ t, c });
     }
-    html += '</div></div>';
+    grandSel += gSum;
+    groupData.push({ g, gSum, rows });
   }
-  html += totChipsHtml('Totale ' + g.label, gTotM);
+  const stat = ui.mobStat || 'all';
+  html += `<div class="statpills">
+    <span class="statpill bad${stat==='bad'?' on':''}" onclick="setMobStat('bad')">✗ ${cnt.bad}<br>mancant${cnt.bad===1?'e':'i'}</span>
+    <span class="statpill warn${stat==='warn'?' on':''}" onclick="setMobStat('warn')">△ ${cnt.warn}<br>parzial${cnt.warn===1?'e':'i'}</span>
+    <span class="statpill ok${stat==='ok'?' on':''}" onclick="setMobStat('ok')">✓ ${cnt.ok}<br>pagat${cnt.ok===1?'o':'i'}</span>
+  </div>`;
+  for (const { g, gSum, rows } of groupData){
+    const vis = rows.filter(r => stat==='all' ? true : r.c.cls===stat);
+    if (!vis.length) continue;
+    vis.sort((a,b)=> (ordStat[a.c.cls]-ordStat[b.c.cls]) || a.t.name.localeCompare(b.t.name,'it'));
+    html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gSum?fmtEur(gSum):'—'}</b></div>`;
+    for (const { t, c } of vis){
+      const att = expectedFor(t, g.oid);
+      const star = marks.has(t.id+'|'+selYM) && c.sum>0 ? '✱' : '';
+      const subParts = [];
+      if (t.propertyId && propName(t.propertyId)) subParts.push('🏠 ' + propName(t.propertyId));
+      if (att) subParts.push('atteso ' + fmtEur(att));
+      else if (!t.ceased) subParts.push('⚠️ fitto da impostare');
+      const amt = c.cls==='na' ? '<span class="muted">—</span>'
+        : c.sum>0 ? `<b class="${c.split?'splitink':''}">${fmtEur(c.sum)}${star}</b>`
+        : '<b class="badink">✗</b>';
+      const click = c.cls==='na' ? ` onclick="openTenant('${t.id}')"` : ` onclick="openCell('${t.id}','${selYM}','${g.oid}')"`;
+      html += `<div class="trow ${c.cls}"${click}>
+        <div class="trow-main">
+          <div class="trow-name">${escapeHtml(t.name)}${t.ceased?' <span class="badge na">cessato</span>':''}</div>
+          ${subParts.length?`<div class="trow-sub">${escapeHtml(subParts.join(' · '))}</div>`:''}
+        </div>
+        <div class="trow-amt">${amt}<span class="chev">›</span></div>
+      </div>`;
+    }
   }
-  html += totChipsHtml('TOTALE ASSOLUTO', grandTot);
+  html += `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div><div class="trow-sub">tutti i proprietari</div></div><div class="trow-amt"><b>${grandSel?fmtEur(grandSel):'—'}</b></div></div>`;
   html += '</div>';
   el.innerHTML = html;
-  // apertura sempre sull'ultimo periodo: scorri griglie e chip fino al mese più recente
-  el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+  // apertura sempre sull'ultimo periodo: scorri griglie fino al mese più recente e centra il mese attivo
   el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
+  el.querySelectorAll('.mselchips').forEach(c=>{
+    const a = c.querySelector('.active');
+    if (a) c.scrollLeft = a.offsetLeft - c.clientWidth/2 + a.clientWidth/2;
+  });
 }
 
 function lastMonthOf(tenantId){
