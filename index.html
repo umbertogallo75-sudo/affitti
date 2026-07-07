@@ -317,6 +317,30 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <label>Immobile (a quale immobile appartiene — facoltativo)</label>
     <select id="tm-property"></select>
     <div id="tm-multiowner"></div>
+    <label>📄 Contratto di locazione</label>
+    <div style="border:1px solid var(--border);border-radius:9px;padding:10px 12px">
+      <div id="tc-status" class="muted" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="btn small secondary" onclick="document.getElementById('tc-file').click()">⬆️ Carica PDF</button>
+        <button class="btn small secondary" id="tc-open" style="display:none">📄 Apri</button>
+        <button class="btn small" id="tc-extract" style="display:none">🤖 Estrai dati con IA</button>
+      </div>
+      <input type="file" id="tc-file" accept=".pdf" style="display:none">
+      <div class="row2">
+        <div><label>Decorrenza</label><input type="date" id="tc-decorrenza"></div>
+        <div><label>Scadenza</label><input type="date" id="tc-scadenza"></div>
+      </div>
+      <div class="row2">
+        <div><label>Preavviso disdetta (mesi)</label><input type="number" id="tc-preavviso" min="0" step="1" placeholder="es. 6"></div>
+        <div><label>Cauzione pagata (€)</label><input type="number" id="tc-cauzione" min="0" step="50"></div>
+      </div>
+      <div class="row2">
+        <div><label>Aggiornamento ISTAT</label><select id="tc-istat"><option value="">No</option><option value="1">Sì</option></select></div>
+        <div><label>Avviso ISTAT (mesi prima)</label><input type="number" id="tc-istatmesi" min="0" step="1" placeholder="es. 2"></div>
+      </div>
+      <label>Variazione ISTAT (es. 75% indice FOI)</label>
+      <input type="text" id="tc-istatnota" placeholder="clausola dal contratto">
+    </div>
     <div class="row2">
       <div><label>Proprietario</label><select id="tm-owner"></select></div>
       <div><label>Stato</label><button class="btn secondary small" id="tm-ceased" style="margin-top:2px;width:100%"></button></div>
@@ -369,7 +393,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v2.9';
+const APP_VERSION = 'v3.0';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -764,7 +788,7 @@ const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:
   suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
   proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null,
-  attesi_per_proprietario:t.expectedByOwner||null, immobile_id:t.propertyId||null });
+  attesi_per_proprietario:t.expectedByOwner||null, immobile_id:t.propertyId||null, contratto:t.contract||null });
 
 const dbUpsertProperty = pr => sb.from('immobili').upsert({ id:pr.id, nome:pr.name, indirizzo:pr.address||'', proprietario_id:pr.ownerId||null }).then(dbErr);
 const dbDeleteProperty = id => sb.from('immobili').delete().eq('id', id).then(dbErr);
@@ -800,7 +824,8 @@ async function loadAll(){
   im.data.forEach(r => state.properties[r.id] = { id:r.id, name:r.nome, address:r.indirizzo||'', ownerId:r.proprietario_id });
   i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
     ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], address:r.indirizzo||'',
-    expectedByOwner:r.attesi_per_proprietario||null, propertyId:r.immobile_id||null, hidden:false });
+    expectedByOwner:r.attesi_per_proprietario||null, propertyId:r.immobile_id||null,
+    contract:r.contratto||null, hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
     ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
@@ -950,6 +975,81 @@ function ignoreTenantInternal(tenantId){
     })();
   }
   return n;
+}
+
+/* ---------------- Contratti: upload, estrazione IA, avvisi ---------------- */
+
+async function uploadContract(tenantId, file){
+  const t = state.tenants[tenantId];
+  if (!t || !sb) return;
+  if (!/\.pdf$/i.test(file.name)){ showToast('Carica il contratto in formato PDF.'); return; }
+  showToast('Caricamento contratto…');
+  const path = tenantId + '/' + Date.now() + '.pdf';
+  const { error } = await sb.storage.from('contratti').upload(path, file, { upsert:true, contentType:'application/pdf' });
+  if (error){ showToast('Upload fallito: ' + error.message); return; }
+  t.contract = Object.assign({}, t.contract || {}, { path });
+  dbUpsertTenants([t]);
+  $('tc-status').textContent = '✓ Contratto caricato';
+  $('tc-open').style.display = ''; $('tc-extract').style.display = '';
+  if (confirm('Contratto caricato. Estrarre subito i dati con l\'IA (anagrafica, canone, ISTAT, scadenza, cauzione)?')) estraiContratto(tenantId);
+}
+
+async function estraiContratto(tenantId){
+  const t = state.tenants[tenantId];
+  if (!t || !t.contract || !t.contract.path){ showToast('Prima carica il PDF del contratto.'); return; }
+  showToast('🤖 Lettura del contratto in corso… può richiedere fino a un minuto.');
+  let data = null;
+  try {
+    const res = await sb.functions.invoke('analizza-contratto', { body: { path: t.contract.path } });
+    if (res.error) throw res.error;
+    data = res.data;
+  } catch(e){ showToast('Estrazione non riuscita: ' + (e.message || e)); return; }
+  if (data.errore){
+    showToast('Estrazione: ' + data.errore + (data.errore==='chiave_mancante' ? ' — configura ANTHROPIC_API_KEY nei secrets Supabase.' : ''));
+    return;
+  }
+  const d = data.dati || {};
+  // i campi vengono precompilati nel modal: si confermano con "Salva"
+  if (d.decorrenza) $('tc-decorrenza').value = d.decorrenza;
+  if (d.scadenza) $('tc-scadenza').value = d.scadenza;
+  if (d.preavviso_mesi) $('tc-preavviso').value = d.preavviso_mesi;
+  if (d.cauzione) $('tc-cauzione').value = d.cauzione;
+  $('tc-istat').value = d.istat_presente ? '1' : '';
+  if (d.istat_presente && !$('tc-istatmesi').value) $('tc-istatmesi').value = 2;
+  if (d.istat_variazione) $('tc-istatnota').value = d.istat_variazione;
+  if (d.canone_mensile && (!$('tm-expected').value || confirm(`Il contratto indica un canone di ${d.canone_mensile} €/mese (la scheda dice ${$('tm-expected').value||'—'}). Aggiornare?`)))
+    $('tm-expected').value = d.canone_mensile;
+  if (d.nome_inquilino && d.nome_inquilino.trim() && normName(d.nome_inquilino) !== normName(t.name) &&
+      confirm(`Il contratto indica come conduttore "${d.nome_inquilino}". Correggere il nome della scheda?`))
+    $('tm-name').value = d.nome_inquilino.trim();
+  t.contract = Object.assign({}, t.contract || {}, { estratto: true });
+  $('tc-status').textContent = '✓ Contratto caricato · dati estratti con IA';
+  showToast('Dati estratti dal contratto: controlla i campi e premi Salva.' + (d.note ? ' Nota: ' + d.note : ''));
+}
+
+/* Avvisi: scadenza contratto (N mesi prima del preavviso) e aggiornamento ISTAT (N mesi prima dell'anniversario) */
+function computeAlerts(today){
+  const oggi = today || new Date().toISOString().slice(0,10);
+  const addMonths = (iso, delta) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); return d.toISOString().slice(0,10); };
+  const out = [];
+  for (const t of Object.values(state.tenants)){
+    if (t.ceased || t.hidden || !t.contract) continue;
+    const c = t.contract;
+    if (c.scadenza){
+      const soglia = addMonths(c.scadenza, -(c.preavvisoMesi || 6));
+      if (oggi > c.scadenza) out.push({ tid:t.id, msg:`📄 Contratto di ${t.name} SCADUTO il ${c.scadenza.split('-').reverse().join('/')}` });
+      else if (oggi >= soglia) out.push({ tid:t.id, msg:`📄 Contratto di ${t.name} in scadenza il ${c.scadenza.split('-').reverse().join('/')}${c.preavvisoMesi?` — preavviso disdetta ${c.preavvisoMesi} mesi`:''}` });
+    }
+    if (c.istat && c.decorrenza){
+      const [ , m, dd ] = c.decorrenza.split('-');
+      let ann = oggi.slice(0,4) + '-' + m + '-' + dd;
+      if (ann < oggi) ann = (+oggi.slice(0,4) + 1) + '-' + m + '-' + dd;
+      const soglia = addMonths(ann, -(c.istatMesi || 2));
+      if (oggi >= soglia && oggi <= ann)
+        out.push({ tid:t.id, msg:`📈 ISTAT ${t.name}: aggiornamento il ${ann.split('-').reverse().join('/')}${c.istatNota?' ('+c.istatNota+')':''} — ricordati la comunicazione` });
+    }
+  }
+  return out;
 }
 
 /* Unificazione di due schede inquilino (stessa persona estratta in modi diversi dalle banche):
@@ -1731,7 +1831,13 @@ function renderPanoramica(){
   <div class="segmented" style="max-width:360px">
     <button class="${ui.vista==='inquilini'?'active':''}" onclick="ui.vista='inquilini';renderPanoramica()">👥 Per inquilino</button>
     <button class="${ui.vista==='immobili'?'active':''}" onclick="ui.vista='immobili';renderPanoramica()">🏠 Per immobile</button>
-  </div>` + toolbarHtml() + `
+  </div>` + (()=>{
+    const avvisi = computeAlerts();
+    return avvisi.length ? `<div class="card" style="background:var(--warn);border-color:#E8D9A8;padding:12px 14px">
+      <b>🔔 Avvisi (${avvisi.length})</b>
+      ${avvisi.map(a=>`<div class="mrow" style="border:none;padding:5px 0;cursor:pointer" onclick="openTenant('${a.tid}')">${escapeHtml(a.msg)}</div>`).join('')}
+    </div>` : '';
+  })() + toolbarHtml() + `
   <div class="legend">
     <span><span class="dot" style="background:var(--ok)"></span> Pagato</span>
     <span><span class="dot" style="background:var(--warn)"></span> Parziale (meno dell'atteso)</span>
@@ -2436,6 +2542,25 @@ function openTenant(id){
   };
   $('tm-delete').onclick = ()=> deleteTenant(t.id);
   $('tm-merge').onclick = ()=>{ closeModal('tenantmodal'); openMergePicker(t.id); };
+  // sezione contratto
+  const c = t.contract || {};
+  $('tc-status').textContent = c.path ? '✓ Contratto caricato' + (c.estratto ? ' · dati estratti con IA' : '') : 'Nessun contratto caricato.';
+  $('tc-open').style.display = c.path ? '' : 'none';
+  $('tc-extract').style.display = c.path ? '' : 'none';
+  $('tc-decorrenza').value = c.decorrenza || '';
+  $('tc-scadenza').value = c.scadenza || '';
+  $('tc-preavviso').value = c.preavvisoMesi ?? '';
+  $('tc-cauzione').value = c.cauzione ?? '';
+  $('tc-istat').value = c.istat ? '1' : '';
+  $('tc-istatmesi').value = c.istatMesi ?? '';
+  $('tc-istatnota').value = c.istatNota || '';
+  $('tc-file').onchange = function(){ if (this.files[0]) uploadContract(t.id, this.files[0]); this.value=''; };
+  $('tc-open').onclick = async ()=>{
+    const { data, error } = await sb.storage.from('contratti').createSignedUrl(t.contract.path, 120);
+    if (error || !data) { showToast('Impossibile aprire il contratto: ' + (error?error.message:'')); return; }
+    window.open(data.signedUrl, '_blank');
+  };
+  $('tc-extract').onclick = ()=> estraiContratto(t.id);
   openModal('tenantmodal');
 }
 
@@ -2453,12 +2578,36 @@ function saveTenant(){
     const nn = prompt('Nome/indirizzo del nuovo immobile (es. "Via Roma 12"):');
     pv = (nn && nn.trim()) ? createProperty(nn, nn, t.ownerId).id : (t.propertyId || '');
   }
+  // dati contratto e avvisi
+  t.contract = Object.assign({}, t.contract || {}, {
+    decorrenza: $('tc-decorrenza').value || null,
+    scadenza: $('tc-scadenza').value || null,
+    preavvisoMesi: parseInt($('tc-preavviso').value) || null,
+    cauzione: parseFloat($('tc-cauzione').value) || null,
+    istat: $('tc-istat').value === '1',
+    istatMesi: parseInt($('tc-istatmesi').value) || null,
+    istatNota: $('tc-istatnota').value.trim() || null
+  });
   t.propertyId = pv || null;
   // cambio inquilino sull'immobile: propone di archiviare (cessare) chi c'era prima
   if (t.propertyId && t.propertyId !== prevProp){
     const precedenti = Object.values(state.tenants)
       .filter(x => x.id !== t.id && x.propertyId === t.propertyId && !x.ceased && !x.hidden);
     for (const a of precedenti){
+      // stesso nome sullo stesso immobile → probabile scheda doppia: propone l'UNIONE
+      if (namesCompatible(normName(a.name), normName(t.name)) &&
+          confirm(`Sull'immobile "${propName(t.propertyId)}" c'è già "${a.name}", che sembra LO STESSO inquilino di "${t.name}".\nUnificare le due schede in una sola? (movimenti e alias confluiscono, la doppia viene eliminata)`)){
+        const res = mergeTenantsCore(a.id, t.id);
+        if (sb && res){
+          (async ()=>{
+            await dbUpsertTenants([res.target]);
+            await sb.from('movimenti').update({ inquilino_id: t.id }).eq('inquilino_id', a.id).then(dbErr);
+            await dbDeleteTenant(a.id);
+          })();
+        }
+        showToast(`Schede unificate: ${res ? res.moved : 0} movimenti spostati su "${t.name}".`);
+        continue;
+      }
       if (confirm(`Sull'immobile "${propName(t.propertyId)}" risulta ancora attivo "${a.name}".\nSegnarlo come CESSATO? (resta nello storico dell'immobile, i suoi dati non si toccano)`)){
         a.ceased = true;
         if (sb) dbUpsertTenants([a]);
@@ -2820,7 +2969,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
-    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor, createProperty, mergeTenantsCore,
+    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor, createProperty, mergeTenantsCore, computeAlerts,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
