@@ -312,6 +312,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     </div>
     <label>Indirizzo immobile</label>
     <input type="text" id="tm-address" placeholder="es. Via Roma 12, int. 3">
+    <div id="tm-multiowner"></div>
     <div class="row2">
       <div><label>Proprietario</label><select id="tm-owner"></select></div>
       <div><label>Stato</label><button class="btn secondary small" id="tm-ceased" style="margin-top:2px;width:100%"></button></div>
@@ -363,7 +364,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.4.3';
+const APP_VERSION = 'v2.5';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -753,7 +754,8 @@ const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:
   proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null,
   suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
-  proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null });
+  proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null,
+  attesi_per_proprietario:t.expectedByOwner||null });
 
 const dbUpsertOwner    = o    => sb.from('proprietari').upsert({id:o.id, nome:o.name}).then(dbErr);
 const dbUpsertTenants  = arr  => arr.length ? sb.from('inquilini').upsert(arr.map(tenRow)).then(dbErr) : Promise.resolve();
@@ -775,7 +777,8 @@ async function loadAll(){
   state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
   p.data.forEach(r => state.owners[r.id] = { id:r.id, name:r.nome });
   i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
-    ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], address:r.indirizzo||'', hidden:false });
+    ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], address:r.indirizzo||'',
+    expectedByOwner:r.attesi_per_proprietario||null, hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
     ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
@@ -1354,10 +1357,10 @@ function showTriage(groups){
         <span style="font-style:italic">«${escapeHtml(g.sample.slice(0,70))}»</span></div>
       </div>
       <select id="triage-${i}" data-cpnorm="${escapeHtml(g.cpNorm)}" style="width:auto;flex-shrink:0;max-width:230px">
+        <option value="ignore">🚫 NON è un inquilino: scarta per sempre</option>
         <option value="later" ${guess?'':'selected'}>📥 Decido dopo (bonifici da assegnare)</option>
         <option value="create">➕ Nuovo inquilino: crealo</option>
         ${opts}
-        <option value="ignore">🚫 Non è un inquilino: scarta per sempre</option>
       </select>
     </div>`;
   }).join('');
@@ -1578,6 +1581,27 @@ function sumsByTenantMonth(){
   return sums;
 }
 
+/* Somme per inquilino, SUDDIVISE per proprietario del movimento: un inquilino può
+   pagare fitti a più proprietari e comparire in più sezioni della panoramica. */
+function sumsByTenantOwner(){
+  const out = {};   // ownerId → tenantId → ym → somma
+  for (const m of activeMovements()){
+    if (!m.tenantId) continue;
+    const oid = m.ownerId || 'none';
+    const t = (out[oid] = out[oid] || {});
+    const b = (t[m.tenantId] = t[m.tenantId] || {});
+    if (m.splits && m.splits.length) for (const s of m.splits) b[s.ym] = (b[s.ym]||0) + s.amount;
+    else { const ym = movMonth(m); b[ym] = (b[ym]||0) + m.amount; }
+  }
+  return out;
+}
+
+/* fitto atteso per uno specifico proprietario (con fallback sull'atteso generale) */
+function expectedFor(t, ownerId){
+  if (t.expectedByOwner && ownerId && t.expectedByOwner[ownerId] != null) return +t.expectedByOwner[ownerId] || null;
+  return t.expected;
+}
+
 /* celle con almeno un movimento associato automaticamente dalla causale (asterisco) */
 function autoMarks(){
   const set = new Set();
@@ -1656,24 +1680,41 @@ function renderPanoramica(){
     return { sum, cls: cellClass(sum, t.expected, future || afterCeased, before),
              split: !!tips, tip: tips ? tips.join('\n') : '' };
   };
-  // raggruppamento per proprietario: una sezione per ciascuno, in coda chi non ne ha uno
+  // raggruppamento per proprietario DEL MOVIMENTO: un inquilino che paga fitti a più
+  // proprietari compare in più sezioni, ognuna con le somme del rispettivo conto
+  const ownSums = sumsByTenantOwner();
   const groups = [];
+  const conMovimenti = new Set(Object.values(ownSums).flatMap(o=>Object.keys(o)));
   for (const o of Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'))){
-    const list = tenants.filter(t=>t.ownerId===o.id);
-    if (list.length) groups.push({ label: o.name, list });
+    const list = tenants.filter(t => (ownSums[o.id] && ownSums[o.id][t.id]) ||
+                                     (!conMovimenti.has(t.id) && t.ownerId===o.id));
+    if (list.length) groups.push({ oid: o.id, label: o.name, list });
   }
-  const senza = tenants.filter(t=>!t.ownerId || !state.owners[t.ownerId]);
-  if (senza.length) groups.push({ label: 'Senza proprietario', list: senza });
+  const senza = tenants.filter(t => (ownSums['none'] && ownSums['none'][t.id]) ||
+                                    (!conMovimenti.has(t.id) && (!t.ownerId || !state.owners[t.ownerId])));
+  if (senza.length) groups.push({ oid: 'none', label: 'Senza proprietario', list: senza });
 
   const headRow = `<tr><th>Inquilino</th>${months.map(ym=>`<th>${monthLabel(ym)}</th>`).join('')}</tr>`;
-  const rowFor = t => {
+  const cellForOwner = (t, ym, oid) => {
+    const s = (ownSums[oid] && ownSums[oid][t.id]) || {};
+    const mesiT = Object.keys(s).sort();
+    const sum = s[ym] || 0;
+    const before = mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]);
+    const future = ym > curYM;
+    const afterCeased = t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1];
+    const tips = (cellFor(t, ym) || {}).tip;   // tooltip quote multi-mese (globale)
+    const isSplit = !!(cellFor(t, ym) || {}).split && sum>0;
+    return { sum, cls: cellClass(sum, expectedFor(t, oid), future || afterCeased, before), split:isSplit, tip:tips||'' };
+  };
+  const rowFor = (t, oid) => {
     const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
-    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${t.expected?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(t.expected)}</div>`:''}</td>`;
+    const att = expectedFor(t, oid);
+    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${att?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(att)}</div>`:''}</td>`;
     for (const ym of months){
-      const c = cellFor(t, ym);
-      const star = marks.has(t.id+'|'+ym) ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
+      const c = cellForOwner(t, ym, oid);
+      const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
       const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum)+star : '✗');
-      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
+      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${oid}')"`;
       const isSplit = c.split && c.cls!=='na';
       r += `<td><span class="cell ${c.cls}${isSplit?' split':''}"${click}${isSplit?` data-tip="${escapeHtml(c.tip)}"`:''}>${label}</span></td>`;
     }
@@ -1684,7 +1725,7 @@ function renderPanoramica(){
   html += '<div class="only-desktop">';
   for (const g of groups){
     html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span></h3>`;
-    html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(rowFor).join('')}</table></div>`;
+    html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(t=>rowFor(t, g.oid)).join('')}</table></div>`;
   }
   html += '</div>';
   // vista mobile: card per inquilino con chip mensili scorrevoli, raggruppate per proprietario
@@ -1693,7 +1734,7 @@ function renderPanoramica(){
     html += `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
   for (const t of g.list){
     const own = '';
-    const cur = cellFor(t, curYM);
+    const cur = cellForOwner(t, curYM, g.oid);
     const curBadge = t.ceased ? '<span class="badge na">cessato</span>'
       : cur.cls==='ok' ? '<span class="badge ok">✓ questo mese</span>'
       : cur.cls==='warn' ? '<span class="badge warn">△ parziale</span>'
@@ -1703,9 +1744,9 @@ function renderPanoramica(){
       <div class="muted" style="font-size:.72rem;margin:2px 0 6px">${t.expected?'atteso '+fmtEur(t.expected)+'/mese':''}${own}</div>
       <div class="monthchips">`;
     for (const ym of months){
-      const c = cellFor(t, ym);
-      const star = marks.has(t.id+'|'+ym) ? '✱' : '';
-      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}')"`;
+      const c = cellForOwner(t, ym, g.oid);
+      const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '✱' : '';
+      const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${g.oid}')"`;
       html += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
     }
     html += '</div></div>';
@@ -2073,6 +2114,18 @@ function openTenant(id){
   $('tm-name').value = t.name;
   $('tm-expected').value = t.expected || '';
   $('tm-address').value = t.address || '';
+  // fitti attesi separati quando l'inquilino riceve da più proprietari
+  const ownersOfT = [...new Set(Object.values(state.movements)
+    .filter(m=>m.tenantId===id && !m.ignored && m.ownerId).map(m=>m.ownerId))];
+  const mo = $('tm-multiowner');
+  if (ownersOfT.length > 1){
+    mo.innerHTML = '<label>Fitto atteso per proprietario (questo inquilino paga più fitti)</label>' +
+      ownersOfT.map(oid=>`<div class="row2" style="align-items:center;margin-bottom:6px">
+        <div class="muted">👤 ${escapeHtml(ownerName(oid)||'—')}</div>
+        <input type="number" min="0" step="10" data-expowner="${oid}" placeholder="€/mese"
+          value="${t.expectedByOwner && t.expectedByOwner[oid]!=null ? t.expectedByOwner[oid] : ''}">
+      </div>`).join('');
+  } else mo.innerHTML = '';
   // proprietario
   const ows = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
   $('tm-owner').innerHTML = '<option value="">— nessuno —</option>' +
@@ -2124,6 +2177,16 @@ function saveTenant(){
   const exp = parseFloat($('tm-expected').value);
   t.expected = (!isNaN(exp) && exp>0) ? exp : null;
   t.address = $('tm-address').value.trim();
+  // attesi per proprietario (se il modulo è visibile)
+  const expInputs = document.querySelectorAll('#tm-multiowner input[data-expowner]');
+  if (expInputs.length){
+    const map = {};
+    expInputs.forEach(inp=>{
+      const v = parseFloat(inp.value);
+      if (!isNaN(v) && v>0) map[inp.dataset.expowner] = v;
+    });
+    t.expectedByOwner = Object.keys(map).length ? map : null;
+  }
   let ow = $('tm-owner').value;
   if (ow==='__new__'){
     const nn = prompt('Nome del nuovo proprietario:');
@@ -2135,9 +2198,10 @@ function saveTenant(){
   showToast('Scheda inquilino aggiornata.');
 }
 
-function openCell(tenantId, ym){
+function openCell(tenantId, ym, ownerId){
   const t = state.tenants[tenantId];
-  const movs = activeMovements().filter(m=>m.tenantId===tenantId && movMonths(m).includes(ym)).sort((a,b)=>a.date.localeCompare(b.date));
+  const movs = activeMovements().filter(m=>m.tenantId===tenantId && movMonths(m).includes(ym) &&
+    (!ownerId || (m.ownerId||'none')===ownerId)).sort((a,b)=>a.date.localeCompare(b.date));
   $('cm-title').innerHTML = `${escapeHtml(t.name)} — ${monthLabel(ym)} <button class="close" onclick="closeModal('cellmodal')">×</button>`;
   const tot = movs.reduce((a,m)=>a+m.amount,0);
   const refSel = m => {
@@ -2443,7 +2507,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
-    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess,
+    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
