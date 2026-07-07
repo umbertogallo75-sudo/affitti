@@ -393,7 +393,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.0.1';
+const APP_VERSION = 'v3.0.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -717,7 +717,13 @@ function parseCausaleMonths(desc, dateISO){
   // anno mancante: il candidato più vicino alla data del bonifico (arretrati più probabili degli anticipi lontani)
   const [py, pm] = dateISO.slice(0,7).split('-').map(Number);
   const resolve = f => {
-    if (f.year) return f.year + '-' + pad2(f.mo);
+    if (f.year){
+      // anno esplicito ma assurdo (oltre 12 mesi dalla data del bonifico) = probabile refuso
+      // dell'inquilino nella causale (es. "marzo 2023" scritto a marzo 2026): si ignora l'anno
+      const diff = (f.year - py) * 12 + (f.mo - pm);
+      if (Math.abs(diff) <= 12) return f.year + '-' + pad2(f.mo);
+      f = { mo: f.mo, year: null, idx: f.idx };
+    }
     let best = null, bestScore = 1e9;
     for (const y of [py-1, py, py+1]){
       const diff = (y-py)*12 + (f.mo-pm);
