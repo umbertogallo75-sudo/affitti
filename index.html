@@ -167,6 +167,10 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .trow-amt .chev{color:var(--muted);font-size:1.25rem;line-height:1}
 .badink{color:var(--bad-ink)}
 .splitink{color:#383FA3}
+.rangesel{display:flex;gap:8px;margin:2px 0 10px}
+.rangesel label{flex:1;margin:0;font-size:.72rem}
+.rangesel select{margin-top:3px}
+.mcard h3 b{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media(min-width:641px){ .only-mobile{display:none} }
 @media(max-width:640px){
   .only-desktop{display:none}
@@ -454,7 +458,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.2';
+const APP_VERSION = 'v3.3';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1870,6 +1874,10 @@ function monthLabelFull(ym){
 /* navigazione mese della panoramica mobile */
 function setMobMonth(ym){ if (!ym) return; ui.mobMonth = ym; renderPanoramica(); }
 function setMobStat(s){ ui.mobStat = (ui.mobStat===s ? 'all' : s); renderPanoramica(); }
+/* modalità panoramica mobile: mese singolo oppure periodo (da → a) */
+function setMobMode(m){ ui.mobMode = m; renderPanoramica(); }
+function setMobFrom(ym){ ui.mobFrom = ym; if (ui.mobTo && ui.mobTo < ym) ui.mobTo = ym; renderPanoramica(); }
+function setMobTo(ym){ ui.mobTo = ym; if (ui.mobFrom && ui.mobFrom > ym) ui.mobFrom = ym; renderPanoramica(); }
 
 function sumsByTenantMonth(){
   const sums = {};
@@ -2061,6 +2069,24 @@ function renderPanoramica(){
   };
   const ordStat = { bad:0, warn:1, ok:2, na:3 };
 
+  // ---- mobile: modalità (mese singolo / periodo) e intervallo scelto ----
+  const mobMode = ui.mobMode || 'mese';
+  if (!ui.mobFrom || !months.includes(ui.mobFrom)) ui.mobFrom = months[Math.max(0, months.length-6)];
+  if (!ui.mobTo || !months.includes(ui.mobTo)) ui.mobTo = months[months.length-1];
+  const rangeMonths = months.slice(months.indexOf(ui.mobFrom), months.indexOf(ui.mobTo)+1);
+  const sumRange = tot => rangeMonths.reduce((a,ym)=>a+(tot[ym]||0), 0);
+  const modeToggle = `<div class="segmented" style="max-width:100%;margin:0 0 8px">
+    <button class="${mobMode==='mese'?'active':''}" onclick="setMobMode('mese')">📅 Mese singolo</button>
+    <button class="${mobMode==='periodo'?'active':''}" onclick="setMobMode('periodo')">📆 Periodo</button>
+  </div>`;
+  const rangeSelHtml = () => `<div class="rangesel">
+    <label>Dal mese<select onchange="setMobFrom(this.value)">${months.map(ym=>`<option value="${ym}"${ym===ui.mobFrom?' selected':''}>${monthLabel(ym)}</option>`).join('')}</select></label>
+    <label>Al mese<select onchange="setMobTo(this.value)">${months.map(ym=>`<option value="${ym}"${ym===ui.mobTo?' selected':''}>${monthLabel(ym)}</option>`).join('')}</select></label>
+  </div>`;
+  const totChipsRange = (label, tot) =>
+    `<div class="mcard" style="background:#F1EFF4"><h3>Σ ${escapeHtml(label)} <b style="font-variant-numeric:tabular-nums">${sumRange(tot)?fmtEur(sumRange(tot)):'—'}</b></h3><div class="monthchips">` +
+    rangeMonths.map(ym=>`<span class="chipmese" style="background:#fff"><b style="font-size:.7rem">${monthLabel(ym).split(' ')[0]}</b><br><b>${tot[ym]?Math.round(tot[ym])+'€':'—'}</b></span>`).join('') + '</div></div>';
+
   // ---- vista PER IMMOBILE: somme e nomi dei paganti per cella ----
   const propSums = {};   // oid → propId('senza' se non collegato) → ym → somma
   const payNames = {};   // oid|propId|ym → nomi inquilini che hanno pagato
@@ -2082,7 +2108,7 @@ function renderPanoramica(){
   if (ui.vista === 'immobili'){
     const qn = normName(ui.q);
     html += '<div class="only-desktop">';
-    let mobileHtml = '<div class="only-mobile">' + mselHtml();
+    let mobileHtml = '<div class="only-mobile">' + modeToggle + (mobMode==='periodo' ? rangeSelHtml() : mselHtml());
     for (const g of groups){
       const bucketO = propSums[g.oid] || {};
       let pids = Object.keys(bucketO);
@@ -2124,30 +2150,51 @@ function renderPanoramica(){
           r += `<td><span class="cell ${cls}"${click}${tip?` data-tip="${escapeHtml(tip)}"`:''}>${cls==='na'?'—':(sum>0?fmtEur(sum):'✗')}</span></td>`;
         }
         rowsH += r + '</tr>';
-        // riga mobile: solo il mese selezionato, grande e leggibile
-        const sumSel = s[selYM] || 0;
-        const beforeSel = mesiP.length ? selYM < mesiP[0] : true;
-        const clsSel = cellClass(sumSel, attesoP, selYM > curYM, beforeSel && sumSel<=0);
-        const whoSel = payNames[g.oid+'|'+pid+'|'+selYM];
-        const subParts = [];
-        if (ts.length) subParts.push('👥 ' + ts.map(t=>t.name).join(', '));
-        if (whoSel && sumSel>0) subParts.push('pagato da ' + [...whoSel].join(', '));
-        else if (attesoP) subParts.push('atteso ' + fmtEur(attesoP));
-        const amtSel = clsSel==='na' ? '<span class="muted">—</span>' : (sumSel>0 ? `<b>${fmtEur(sumSel)}</b>` : '<b class="badink">✗</b>');
-        const clickSel = clsSel==='na' ? '' : ` onclick="openCellProp('${pid}','${selYM}','${g.oid}')"`;
-        mobRows.push({ ord: ordStat[clsSel], html: `<div class="trow ${clsSel}"${clickSel}>
-          <div class="trow-main"><div class="trow-name">🏠 ${escapeHtml(nome)}</div>${subParts.length?`<div class="trow-sub">${escapeHtml(subParts.join(' · '))}</div>`:''}</div>
-          <div class="trow-amt">${amtSel}${clsSel!=='na'?'<span class="chev">›</span>':''}</div></div>` });
+        if (mobMode === 'periodo'){
+          // card mobile: mesi dell'intervallo affiancati
+          let chips = '', pSum = 0;
+          for (const ym of rangeMonths){
+            const sum = s[ym] || 0;
+            pSum += sum;
+            const before = mesiP.length ? ym < mesiP[0] : true;
+            const cls = cellClass(sum, attesoP, ym > curYM, before && sum<=0);
+            const click = cls==='na' ? '' : ` onclick="openCellProp('${pid}','${ym}','${g.oid}')"`;
+            chips += `<span class="chipmese ${cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${cls==='na'?'—':(sum>0?Math.round(sum)+'€':'✗')}</b></span>`;
+          }
+          mobRows.push({ ord: 0, html: `<div class="mcard">
+            <h3>🏠 ${escapeHtml(nome)} <b style="font-variant-numeric:tabular-nums">${pSum?fmtEur(pSum):'—'}</b></h3>
+            ${ts.length?`<div class="muted" style="font-size:.72rem;margin:2px 0 6px">👥 ${escapeHtml(ts.map(t=>t.name).join(', '))}</div>`:''}
+            <div class="monthchips">${chips}</div></div>` });
+        } else {
+          // riga mobile: solo il mese selezionato, grande e leggibile
+          const sumSel = s[selYM] || 0;
+          const beforeSel = mesiP.length ? selYM < mesiP[0] : true;
+          const clsSel = cellClass(sumSel, attesoP, selYM > curYM, beforeSel && sumSel<=0);
+          const whoSel = payNames[g.oid+'|'+pid+'|'+selYM];
+          const subParts = [];
+          if (ts.length) subParts.push('👥 ' + ts.map(t=>t.name).join(', '));
+          if (whoSel && sumSel>0) subParts.push('pagato da ' + [...whoSel].join(', '));
+          else if (attesoP) subParts.push('atteso ' + fmtEur(attesoP));
+          const amtSel = clsSel==='na' ? '<span class="muted">—</span>' : (sumSel>0 ? `<b>${fmtEur(sumSel)}</b>` : '<b class="badink">✗</b>');
+          const clickSel = clsSel==='na' ? '' : ` onclick="openCellProp('${pid}','${selYM}','${g.oid}')"`;
+          mobRows.push({ ord: ordStat[clsSel], html: `<div class="trow ${clsSel}"${clickSel}>
+            <div class="trow-main"><div class="trow-name">🏠 ${escapeHtml(nome)}</div>${subParts.length?`<div class="trow-sub">${escapeHtml(subParts.join(' · '))}</div>`:''}</div>
+            <div class="trow-amt">${amtSel}${clsSel!=='na'?'<span class="chev">›</span>':''}</div></div>` });
+        }
       }
       rowsH += totalRowHtml('Totale ' + g.label, gTot, 'totalrow');
       addInto(grandTot, gTot);
       html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)}</h3><div class="tablewrap"><table class="gridtable">${headRow}${rowsH}</table></div>`;
       mobRows.sort((a,b)=>a.ord-b.ord);
-      mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gTot[selYM]?fmtEur(gTot[selYM]):'—'}</b></div>` + mobRows.map(x=>x.html).join('');
+      const gHead = mobMode==='periodo' ? (sumRange(gTot)?fmtEur(sumRange(gTot)):'—') : (gTot[selYM]?fmtEur(gTot[selYM]):'—');
+      mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gHead}</b></div>` + mobRows.map(x=>x.html).join('');
+      if (mobMode==='periodo') mobileHtml += totChipsRange('Totale ' + g.label, gTot);
     }
     html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
     html += '</div>';
-    mobileHtml += `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div></div><div class="trow-amt"><b>${grandTot[selYM]?fmtEur(grandTot[selYM]):'—'}</b></div></div></div>`;
+    mobileHtml += (mobMode==='periodo'
+      ? totChipsRange('TOTALE ASSOLUTO', grandTot)
+      : `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div></div><div class="trow-amt"><b>${grandTot[selYM]?fmtEur(grandTot[selYM]):'—'}</b></div></div>`) + '</div>';
     el.innerHTML = html + mobileHtml;
     // apertura sempre sull'ultimo periodo: scorri griglie fino al mese più recente e centra il mese attivo
     el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
@@ -2169,8 +2216,43 @@ function renderPanoramica(){
   }
   html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
   html += '</div>';
-  // ---- vista mobile PER INQUILINO: un mese alla volta, morosi in alto, contatori-filtro ----
-  html += '<div class="only-mobile">' + mselHtml();
+  // ---- vista mobile PER INQUILINO ----
+  html += '<div class="only-mobile">' + modeToggle;
+  if (mobMode === 'periodo'){
+    // vista PERIODO: card per inquilino con i mesi dell'intervallo affiancati
+    html += rangeSelHtml();
+    for (const g of groups){
+      const gTotM = {};
+      for (const t of g.list) addInto(gTotM, (ownSums[g.oid]||{})[t.id]);
+      html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${sumRange(gTotM)?fmtEur(sumRange(gTotM)):'—'}</b></div>`;
+      for (const t of g.list){
+        const att = expectedFor(t, g.oid);
+        const subParts = [];
+        if (t.propertyId && propName(t.propertyId)) subParts.push('🏠 ' + propName(t.propertyId));
+        if (att) subParts.push('atteso ' + fmtEur(att) + '/mese');
+        let chips = '', tSum = 0;
+        for (const ym of rangeMonths){
+          const c = cellForOwner(t, ym, g.oid);
+          if (c.cls!=='na') tSum += c.sum;
+          const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '✱' : '';
+          const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${g.oid}')"`;
+          chips += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
+        }
+        html += `<div class="mcard">
+          <h3 onclick="openTenant('${t.id}')">${escapeHtml(t.name)}${t.ceased?' <span class="badge na">cessato</span>':''} <b style="font-variant-numeric:tabular-nums">${tSum?fmtEur(tSum):'—'}</b></h3>
+          ${subParts.length?`<div class="muted" style="font-size:.72rem;margin:2px 0 6px">${escapeHtml(subParts.join(' · '))}</div>`:''}
+          <div class="monthchips">${chips}</div></div>`;
+      }
+      html += totChipsRange('Totale ' + g.label, gTotM);
+    }
+    html += totChipsRange('TOTALE ASSOLUTO', grandTot);
+    html += '</div>';
+    el.innerHTML = html;
+    el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
+    return;
+  }
+  // vista MESE SINGOLO: morosi in alto, contatori-filtro
+  html += mselHtml();
   const cnt = { ok:0, warn:0, bad:0 };
   let grandSel = 0;
   const groupData = [];
