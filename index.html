@@ -368,7 +368,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v2.7';
+const APP_VERSION = 'v2.8';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1744,7 +1744,8 @@ function renderPanoramica(){
     const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
     const att = expectedFor(t, oid);
     const casa = t.propertyId && propName(t.propertyId) ? `<div class="muted" style="font-size:.65rem;font-weight:400">🏠 ${escapeHtml(propName(t.propertyId))}</div>` : '';
-    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${casa}${att?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(att)}</div>`:''}</td>`;
+    const avvisoFitto = (!att && !t.ceased) ? '<div><span class="badge warn" title="clicca sul nome per impostarlo">⚠️ fitto da impostare</span></div>' : '';
+    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${casa}${att?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(att)}</div>`:avvisoFitto}</td>`;
     for (const ym of months){
       const c = cellForOwner(t, ym, oid);
       const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
@@ -1912,7 +1913,13 @@ function tenantBadge(t, sums){
 function renderInquilini(){
   const el = $('view-inquilini');
   const sums = sumsByTenantMonth();
-  const tenants = filteredTenants(sums);
+  // in Anagrafica i cessati restano SEMPRE visibili (in fondo, in grigio) per poterli riattivare
+  const qn0 = normName(ui.q);
+  const tenants = Object.values(state.tenants)
+    .filter(t=>!t.hidden)
+    .filter(t=>ui.owner==='all' || (t.ownerId||'none')===ui.owner)
+    .filter(t=>!qn0 || normName(t.name).includes(qn0) || t.aliases.some(a=>a.includes(qn0)))
+    .sort((a,b)=>(a.ceased?1:0)-(b.ceased?1:0) || a.name.localeCompare(b.name,'it'));
   let html = `<h2>Anagrafica</h2>
   <div class="segmented">
     <button class="${ui.anagTab==='inquilini'?'active':''}" onclick="ui.anagTab='inquilini';renderInquilini()">👥 Inquilini</button>
@@ -1978,6 +1985,15 @@ function renderInquilini(){
   if (!Object.keys(state.tenants).length){
     el.innerHTML = html + '<div class="card empty">Nessun inquilino in anagrafica: creane uno con il bottone qui sopra, oppure importa un estratto conto e crea le schede dai bonifici trovati.</div>';
     return;
+  }
+  // avviso ben visibile: schede senza fitto atteso (clicca per completare)
+  const senzaFitto = Object.values(state.tenants).filter(t=>!t.hidden && !t.ceased && !t.expected && !t.expectedByOwner);
+  if (senzaFitto.length){
+    html += `<div class="card" style="background:var(--warn);border-color:#E8D9A8;padding:12px 14px">
+      <b>⚠️ ${senzaFitto.length} inquilin${senzaFitto.length===1?'o':'i'} senza fitto atteso</b>
+      <span class="muted" style="color:var(--warn-ink)"> — clicca per inserirlo:</span>
+      <div class="chips" style="margin-top:8px">${senzaFitto.map(t=>`<span class="chip" style="cursor:pointer;background:#fff" onclick="openTenant('${t.id}')">${escapeHtml(t.name)} ✏️</span>`).join('')}</div>
+    </div>`;
   }
   html += toolbarHtml() + '<div class="tenantgrid">';
   for (const t of tenants){
@@ -2085,10 +2101,13 @@ function deleteOwner(id){
 function toggleCeased(id){
   const t = state.tenants[id];
   if (!t) return;
+  if (!t.ceased && !confirm(`Segnare "${t.name}" come CESSATO?\nLo storico resta consultabile e potrai riattivarlo in qualsiasi momento dall'Anagrafica.`)) return;
   t.ceased = !t.ceased;
   if (sb) dbUpsertTenants([t]);
   renderAll();
-  showToast(t.ceased ? `${t.name} segnato come cessato: resta consultabile nel filtro "Cessati".` : `${t.name} riattivato.`);
+  showToast(t.ceased
+    ? `${t.name} cessato. Per annullare: Anagrafica → la sua scheda (in fondo, in grigio) → "↩️ Riattiva".`
+    : `${t.name} riattivato: torna nella panoramica.`);
 }
 
 /* ---------------- Bonifici da assegnare ---------------- */
