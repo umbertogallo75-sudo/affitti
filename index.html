@@ -393,7 +393,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.0.2';
+const APP_VERSION = 'v3.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1288,7 +1288,21 @@ function formatSignature(rows, headerIdx){
   return headerIdx>=0 ? normName(rows[headerIdx].map(c=>String(c)).join(' | ')) : 'SENZA INTESTAZIONE ' + nCols;
 }
 
-function startMapping(rows){
+/* IA sulla struttura del file: per formati mai visti, chiede a Claude quale colonna è cosa */
+async function analisiFormatoIA(rows){
+  if (!sb) return null;
+  try {
+    const campione = rows.slice(0, 25).map(r => (r||[]).slice(0, 20).map(c =>
+      String(c instanceof Date ? c.toISOString().slice(0,10) : (c ?? '')).slice(0, 60)));
+    const res = await sb.functions.invoke('analizza-formato', { body: { righe: campione } });
+    if (res.error || !res.data || !res.data.mappa) return null;
+    const m = res.data.mappa;
+    if ((m.confidenza ?? 0) < 0.5) return null;
+    return m;
+  } catch(e){ return null; }
+}
+
+async function startMapping(rows){
   pendingRows = rows;
   pendingHeaderIdx = findHeaderRow(rows);
   let map = autoDetectColumns(rows, pendingHeaderIdx);
@@ -1296,6 +1310,24 @@ function startMapping(rows){
   const sig = formatSignature(rows, pendingHeaderIdx);
   const remembered = state.mappings && state.mappings[sig];
   if (remembered) map = Object.assign({}, map, remembered);
+  // formato sconosciuto e riconoscimento locale incompleto → l'IA propone la struttura
+  let aiFormato = false;
+  if (!remembered && !(map.date>=0 && (map.amount>=0 || map.inflow>=0))){
+    showToast('🤖 Formato mai visto: analisi IA della struttura in corso…');
+    const m = await analisiFormatoIA(rows);
+    if (m){
+      if (m.header_riga != null && m.header_riga >= 0 && m.header_riga < rows.length) pendingHeaderIdx = m.header_riga;
+      map = {
+        date:    m.data       != null ? m.data       : map.date,
+        amount:  m.importo    != null ? m.importo    : map.amount,
+        inflow:  m.entrate    != null ? m.entrate    : map.inflow,
+        outflow: m.uscite     != null ? m.uscite     : map.outflow,
+        desc:    m.descrizione!= null ? m.descrizione: map.desc,
+        cp:      m.ordinante  != null ? m.ordinante  : map.cp
+      };
+      aiFormato = true;
+    }
+  }
   const nCols = Math.max(...rows.slice(0,20).map(r=>r.length));
   const header = pendingHeaderIdx>=0 ? rows[pendingHeaderIdx] : null;
 
@@ -1337,6 +1369,8 @@ function startMapping(rows){
   const auto = map.date>=0 && (map.amount>=0 || map.inflow>=0);
   document.getElementById('mapinfo').textContent = remembered
     ? '✓ Formato già visto in un import precedente: mappatura recuperata dalla memoria. Controlla e conferma.'
+    : aiFormato
+    ? '🤖 Formato nuovo: struttura riconosciuta dall\'IA. Verifica le colonne proposte e conferma — la mappatura verrà memorizzata per i prossimi import.'
     : auto
     ? 'Colonne riconosciute automaticamente (analisi di intestazioni e contenuto). Controlla che siano corrette e conferma. Verranno importati solo i movimenti in entrata (bonifici ricevuti).'
     : '⚠️ Formato non riconosciuto: indica le colonne manualmente qui sotto. L\'app memorizzerà questa mappatura per i prossimi import dello stesso formato.';
