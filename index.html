@@ -393,7 +393,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.0';
+const APP_VERSION = 'v3.0.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -650,7 +650,8 @@ function namesCompatible(a, b){
   if (!ta.length || !tb.length) return false;
   const [small, big] = ta.length<=tb.length ? [ta,tb] : [tb,ta];
   if (small.join('').length < 4) return false;
-  return small.every(t => big.some(u => u===t));
+  // tollera i troncamenti bancari ("ILLI" ↔ "ILL"): una parola vale l'altra se una è prefisso dell'altra (min 3 lettere)
+  return small.every(t => big.some(u => u===t || (t.length>=3 && u.startsWith(t)) || (u.length>=3 && t.startsWith(u))));
 }
 
 function dedupKey(dateISO, amount, cpNorm){
