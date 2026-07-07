@@ -72,6 +72,10 @@ th{background:#f8fafc;font-weight:600;color:var(--muted);font-size:.75rem;text-t
 .legend span{display:inline-flex;align-items:center;gap:5px}
 .dot{width:12px;height:12px;border-radius:4px;display:inline-block}
 .tenantgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.totalrow td{font-weight:800;background:#F1EFF4;border-top:2px solid var(--border);font-variant-numeric:tabular-nums}
+.grandrow td{font-weight:800;background:var(--dark);color:#fff;border-top:none}
+.gridtable .grandrow td:first-child{background:var(--dark);color:#fff}
+.gridtable .totalrow td:first-child{background:#F1EFF4}
 .tcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;transition:.12s}
 .tcard:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(37,99,235,.08)}
 .tcard h3{display:flex;justify-content:space-between;align-items:center}
@@ -310,8 +314,8 @@ footer button:hover{background:var(--bg);color:var(--ink)}
       <div><label>Nome inquilino</label><input type="text" id="tm-name"></div>
       <div><label>Affitto mensile atteso (€)</label><input type="number" id="tm-expected" min="0" step="10" placeholder="es. 750"></div>
     </div>
-    <label>Indirizzo immobile</label>
-    <input type="text" id="tm-address" placeholder="es. Via Roma 12, int. 3">
+    <label>Immobile (a quale immobile appartiene — facoltativo)</label>
+    <select id="tm-property"></select>
     <div id="tm-multiowner"></div>
     <div class="row2">
       <div><label>Proprietario</label><select id="tm-owner"></select></div>
@@ -361,10 +365,10 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 let sb = null;          // client Supabase
 let appStarted = false;
 
-let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, nextId: 1 };
+let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
-let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini' };
-const APP_VERSION = 'v2.5';
+let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
+const APP_VERSION = 'v2.6';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -755,7 +759,18 @@ const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:
   suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
   proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null,
-  attesi_per_proprietario:t.expectedByOwner||null });
+  attesi_per_proprietario:t.expectedByOwner||null, immobile_id:t.propertyId||null });
+
+const dbUpsertProperty = pr => sb.from('immobili').upsert({ id:pr.id, nome:pr.name, indirizzo:pr.address||'', proprietario_id:pr.ownerId||null }).then(dbErr);
+const dbDeleteProperty = id => sb.from('immobili').delete().eq('id', id).then(dbErr);
+
+function createProperty(name, address, ownerId){
+  const id = newId('im-');
+  state.properties[id] = { id, name: name.trim(), address: (address||'').trim(), ownerId: ownerId||null };
+  if (sb) dbUpsertProperty(state.properties[id]);
+  return state.properties[id];
+}
+function propName(id){ return state.properties[id] ? state.properties[id].name : null; }
 
 const dbUpsertOwner    = o    => sb.from('proprietari').upsert({id:o.id, nome:o.name}).then(dbErr);
 const dbUpsertTenants  = arr  => arr.length ? sb.from('inquilini').upsert(arr.map(tenRow)).then(dbErr) : Promise.resolve();
@@ -766,19 +781,21 @@ const dbUpsertIgnored  = g    => sb.from('ordinanti_ignorati').upsert({ordinante
 const dbDeleteIgnored  = norm => sb.from('ordinanti_ignorati').delete().eq('ordinante_norm', norm).then(dbErr);
 
 async function loadAll(){
-  const [p,i,m,g,il] = await Promise.all([
+  const [p,i,m,g,il,im] = await Promise.all([
     sb.from('proprietari').select('*'),
     sb.from('inquilini').select('*'),
     sb.from('movimenti').select('*'),
     sb.from('ordinanti_ignorati').select('*'),
-    sb.from('import_log').select('*')
+    sb.from('import_log').select('*'),
+    sb.from('immobili').select('*')
   ]);
-  for (const r of [p,i,m,g,il]) if (r.error) throw r.error;
-  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
+  for (const r of [p,i,m,g,il,im]) if (r.error) throw r.error;
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, properties:{}, nextId:1 };
   p.data.forEach(r => state.owners[r.id] = { id:r.id, name:r.nome });
+  im.data.forEach(r => state.properties[r.id] = { id:r.id, name:r.nome, address:r.indirizzo||'', ownerId:r.proprietario_id });
   i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
     ceased:!!r.cessato, ownerId:r.proprietario_id, aliases:r.alias||[], address:r.indirizzo||'',
-    expectedByOwner:r.attesi_per_proprietario||null, hidden:false });
+    expectedByOwner:r.attesi_per_proprietario||null, propertyId:r.immobile_id||null, hidden:false });
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
     ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
@@ -1648,6 +1665,10 @@ function renderPanoramica(){
   <div class="actionsrow">
     <button class="btn small" onclick="openManual()">💶 Inserisci pagamento manuale</button>
     <button class="btn small secondary" onclick="exportViewer()">📤 Condividi in sola lettura</button>
+  </div>
+  <div class="segmented" style="max-width:360px">
+    <button class="${ui.vista==='inquilini'?'active':''}" onclick="ui.vista='inquilini';renderPanoramica()">👥 Per inquilino</button>
+    <button class="${ui.vista==='immobili'?'active':''}" onclick="ui.vista='immobili';renderPanoramica()">🏠 Per immobile</button>
   </div>` + toolbarHtml() + `
   <div class="legend">
     <span><span class="dot" style="background:var(--ok)"></span> Pagato</span>
@@ -1709,7 +1730,8 @@ function renderPanoramica(){
   const rowFor = (t, oid) => {
     const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
     const att = expectedFor(t, oid);
-    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${att?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(att)}</div>`:''}</td>`;
+    const casa = t.propertyId && propName(t.propertyId) ? `<div class="muted" style="font-size:.65rem;font-weight:400">🏠 ${escapeHtml(propName(t.propertyId))}</div>` : '';
+    let r = `<tr><td title="${escapeHtml(t.name)}" onclick="openTenant('${t.id}')" style="cursor:pointer">${escapeHtml(t.name)}${ceasedBadge}${casa}${att?`<div class="muted" style="font-size:.68rem;font-weight:400">atteso ${fmtEur(att)}</div>`:''}</td>`;
     for (const ym of months){
       const c = cellForOwner(t, ym, oid);
       const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
@@ -1721,19 +1743,115 @@ function renderPanoramica(){
     return r + '</tr>';
   };
 
-  // vista desktop: una griglia mesi × inquilini per ogni proprietario
+  // ---- totali: per gruppo (riga in fondo a ogni tabella) e complessivo ----
+  const addInto = (tot, bucket) => { for (const ym in (bucket||{})) tot[ym] = (tot[ym]||0) + bucket[ym]; };
+  const totalRowHtml = (label, tot, cls) =>
+    `<tr class="${cls}"><td>${escapeHtml(label)}</td>` +
+    months.map(ym=>`<td>${tot[ym]?fmtEur(tot[ym]):'—'}</td>`).join('') + '</tr>';
+  const totChipsHtml = (label, tot) =>
+    `<div class="mcard" style="background:#F1EFF4"><h3>Σ ${escapeHtml(label)}</h3><div class="monthchips">` +
+    months.map(ym=>`<span class="chipmese" style="background:#fff"><b style="font-size:.7rem">${monthLabel(ym).split(' ')[0]}</b><br><b>${tot[ym]?Math.round(tot[ym])+'€':'—'}</b></span>`).join('') + '</div></div>';
+  const grandTot = {};
+
+  // ---- vista PER IMMOBILE: somme e nomi dei paganti per cella ----
+  const propSums = {};   // oid → propId('senza' se non collegato) → ym → somma
+  const payNames = {};   // oid|propId|ym → nomi inquilini che hanno pagato
+  for (const m of activeMovements()){
+    if (!m.tenantId) continue;
+    const t0 = state.tenants[m.tenantId]; if (!t0) continue;
+    const oid = m.ownerId || 'none';
+    const pid = t0.propertyId || 'senza';
+    const b = ((propSums[oid] = propSums[oid] || {})[pid] = (propSums[oid][pid] || {}));
+    const put = (ym, amt) => {
+      b[ym] = (b[ym]||0) + amt;
+      const k = oid+'|'+pid+'|'+ym;
+      (payNames[k] = payNames[k] || new Set()).add(t0.name);
+    };
+    if (m.splits && m.splits.length) for (const s of m.splits) put(s.ym, s.amount);
+    else put(movMonth(m), m.amount);
+  }
+
+  if (ui.vista === 'immobili'){
+    const qn = normName(ui.q);
+    html += '<div class="only-desktop">';
+    let mobileHtml = '<div class="only-mobile">';
+    for (const g of groups){
+      const bucketO = propSums[g.oid] || {};
+      let pids = Object.keys(bucketO);
+      // includi anche immobili del proprietario ancora senza movimenti
+      for (const pr of Object.values(state.properties)) if (pr.ownerId===g.oid && !pids.includes(pr.id)) pids.push(pr.id);
+      pids = pids.filter(pid => {
+        if (!qn) return true;
+        const pr = state.properties[pid];
+        const tn = Object.values(state.tenants).filter(t=>t.propertyId===pid).map(t=>normName(t.name)).join(' ');
+        return (pr && normName(pr.name).includes(qn)) || tn.includes(qn) || (pid==='senza' && 'SENZA IMMOBILE'.includes(qn));
+      }).sort((a,b)=>{
+        const na = a==='senza' ? 'ZZZ' : (state.properties[a]?state.properties[a].name:'');
+        const nb = b==='senza' ? 'ZZZ' : (state.properties[b]?state.properties[b].name:'');
+        return na.localeCompare(nb,'it');
+      });
+      if (!pids.length) continue;
+      const gTot = {};
+      let rowsH = '';
+      let cardsH = `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
+      for (const pid of pids){
+        const pr = state.properties[pid];
+        const nome = pid==='senza' ? '— senza immobile —' : (pr ? pr.name : '?');
+        const ts = Object.values(state.tenants).filter(t => pid==='senza' ? false : t.propertyId===pid);
+        const attivi = ts.filter(t=>!t.ceased);
+        const attesoP = attivi.reduce((a,t)=>a + (expectedFor(t,g.oid)||0), 0) || null;
+        const s = bucketO[pid] || {};
+        addInto(gTot, s);
+        const mesiP = Object.keys(s).sort();
+        const inquiliniLbl = ts.length
+          ? `<div class="muted" style="font-size:.65rem;font-weight:400">👥 ${ts.map(t=>t.ceased?escapeHtml(t.name):'<b>'+escapeHtml(t.name)+'</b>').join(', ')}</div>` : '';
+        let r = `<tr><td title="${escapeHtml(nome)}">🏠 ${escapeHtml(nome)}${inquiliniLbl}</td>`;
+        let chips = '';
+        for (const ym of months){
+          const sum = s[ym] || 0;
+          const before = mesiP.length ? ym < mesiP[0] : true;
+          const cls = cellClass(sum, attesoP, ym > curYM, before && sum<=0);
+          const who = payNames[g.oid+'|'+pid+'|'+ym];
+          const tip = who ? `Pagato da: ${[...who].join(', ')}` : '';
+          const click = cls==='na' ? '' : ` onclick="openCellProp('${pid}','${ym}','${g.oid}')"`;
+          r += `<td><span class="cell ${cls}"${click}${tip?` data-tip="${escapeHtml(tip)}"`:''}>${cls==='na'?'—':(sum>0?fmtEur(sum):'✗')}</span></td>`;
+          chips += `<span class="chipmese ${cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${cls==='na'?'—':(sum>0?Math.round(sum)+'€':'✗')}</b></span>`;
+        }
+        rowsH += r + '</tr>';
+        cardsH += `<div class="mcard"><h3>🏠 ${escapeHtml(nome)}</h3>${inquiliniLbl}<div class="monthchips">${chips}</div></div>`;
+      }
+      rowsH += totalRowHtml('Totale ' + g.label, gTot, 'totalrow');
+      addInto(grandTot, gTot);
+      html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)}</h3><div class="tablewrap"><table class="gridtable">${headRow}${rowsH}</table></div>`;
+      mobileHtml += cardsH + totChipsHtml('Totale ' + g.label, gTot);
+    }
+    html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
+    html += '</div>';
+    mobileHtml += totChipsHtml('TOTALE ASSOLUTO', grandTot) + '</div>';
+    el.innerHTML = html + mobileHtml;
+    el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+    return;
+  }
+
+  // ---- vista PER INQUILINO (desktop): griglia per proprietario con riga di totale ----
   html += '<div class="only-desktop">';
   for (const g of groups){
+    const gTot = {};
+    for (const t of g.list) addInto(gTot, (ownSums[g.oid]||{})[t.id]);
+    addInto(grandTot, gTot);
     html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span></h3>`;
-    html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(t=>rowFor(t, g.oid)).join('')}</table></div>`;
+    html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(t=>rowFor(t, g.oid)).join('')}${totalRowHtml('Totale ' + g.label, gTot, 'totalrow')}</table></div>`;
   }
+  html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
   html += '</div>';
   // vista mobile: card per inquilino con chip mensili scorrevoli, raggruppate per proprietario
   html += '<div class="only-mobile">';
   for (const g of groups){
+    const gTotM = {};
+    for (const t of g.list) addInto(gTotM, (ownSums[g.oid]||{})[t.id]);
     html += `<h3 style="margin:14px 2px 8px">👤 ${escapeHtml(g.label)}</h3>`;
   for (const t of g.list){
-    const own = '';
+    const own = t.propertyId && propName(t.propertyId) ? ' · 🏠 ' + escapeHtml(propName(t.propertyId)) : '';
     const cur = cellForOwner(t, curYM, g.oid);
     const curBadge = t.ceased ? '<span class="badge na">cessato</span>'
       : cur.cls==='ok' ? '<span class="badge ok">✓ questo mese</span>'
@@ -1751,7 +1869,9 @@ function renderPanoramica(){
     }
     html += '</div></div>';
   }
+  html += totChipsHtml('Totale ' + g.label, gTotM);
   }
+  html += totChipsHtml('TOTALE ASSOLUTO', grandTot);
   html += '</div>';
   el.innerHTML = html;
   // sulle card mobile porta a destra (mesi più recenti) lo scroll dei chip
@@ -1781,7 +1901,35 @@ function renderInquilini(){
   <div class="segmented">
     <button class="${ui.anagTab==='inquilini'?'active':''}" onclick="ui.anagTab='inquilini';renderInquilini()">👥 Inquilini</button>
     <button class="${ui.anagTab==='proprietari'?'active':''}" onclick="ui.anagTab='proprietari';renderInquilini()">👤 Proprietari</button>
+    <button class="${ui.anagTab==='immobili'?'active':''}" onclick="ui.anagTab='immobili';renderInquilini()">🏠 Immobili</button>
   </div>`;
+
+  // ---- sotto-scheda IMMOBILI ----
+  if (ui.anagTab==='immobili'){
+    html += `<div class="actionsrow"><button class="btn" onclick="newPropertyManual()">➕ Crea immobile</button></div>`;
+    const props = Object.values(state.properties).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+    if (!props.length){
+      html += '<div class="card empty">Nessun immobile: creane uno qui, oppure dalla scheda di un inquilino.</div>';
+    } else {
+      html += '<div class="tenantgrid">';
+      for (const pr of props){
+        const ts = Object.values(state.tenants).filter(t=>t.propertyId===pr.id);
+        const attivi = ts.filter(t=>!t.ceased), cessati = ts.filter(t=>t.ceased);
+        html += `<div class="tcard" style="cursor:default">
+          <h3>🏠 ${escapeHtml(pr.name)}</h3>
+          ${pr.address && pr.address!==pr.name ? `<div class="muted" style="font-size:.75rem">${escapeHtml(pr.address)}</div>` : ''}
+          <div class="muted" style="margin:4px 0 8px">${pr.ownerId&&ownerName(pr.ownerId)?'👤 '+escapeHtml(ownerName(pr.ownerId))+' · ':''}${attivi.length?'Inquilino attuale: <b>'+attivi.map(t=>escapeHtml(t.name)).join(', ')+'</b>':'Sfitto'}${cessati.length?' · storici: '+cessati.map(t=>escapeHtml(t.name)).join(', '):''}</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn small secondary" style="flex:1" onclick="renameProperty('${pr.id}')">✏️ Modifica</button>
+            <button class="btn small danger" onclick="deleteProperty('${pr.id}')">🗑</button>
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    el.innerHTML = html;
+    return;
+  }
 
   // ---- sotto-scheda PROPRIETARI ----
   if (ui.anagTab==='proprietari'){
@@ -1857,6 +2005,35 @@ function newTenantManual(){
   if (sb) dbUpsertTenants([t]);
   renderAll();
   openTenant(t.id);   // completa fitto mensile, indirizzo, proprietario
+}
+
+function newPropertyManual(){
+  const name = prompt('Nome/indirizzo dell\'immobile (es. "Via Roma 12, int. 3"):');
+  if (!name || !name.trim()) return;
+  createProperty(name, name, null);
+  renderAll();
+  showToast('Immobile creato: associalo agli inquilini dalle loro schede.');
+}
+
+function renameProperty(id){
+  const pr = state.properties[id];
+  if (!pr) return;
+  const name = prompt('Nome/indirizzo dell\'immobile:', pr.name);
+  if (!name || !name.trim()) return;
+  pr.name = name.trim(); pr.address = name.trim();
+  if (sb) dbUpsertProperty(pr);
+  renderAll();
+}
+
+function deleteProperty(id){
+  const pr = state.properties[id];
+  if (!pr) return;
+  const linked = Object.values(state.tenants).filter(t=>t.propertyId===id);
+  if (linked.length){ showToast(`Non eliminabile: ${linked.length} inquilin${linked.length===1?'o è collegato':'i sono collegati'}. Scollegali prima dalle loro schede.`); return; }
+  if (!confirm(`Eliminare l'immobile "${pr.name}"?`)) return;
+  delete state.properties[id];
+  if (sb) dbDeleteProperty(id);
+  renderAll();
 }
 
 function newOwnerManual(){
@@ -2113,7 +2290,11 @@ function openTenant(id){
   editingTenantId = id;
   $('tm-name').value = t.name;
   $('tm-expected').value = t.expected || '';
-  $('tm-address').value = t.address || '';
+  // immobile associato, con creazione al volo
+  const props = Object.values(state.properties).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  $('tm-property').innerHTML = '<option value="">— nessun immobile —</option>' +
+    props.map(pr=>`<option value="${pr.id}" ${pr.id===t.propertyId?'selected':''}>🏠 ${escapeHtml(pr.name)}</option>`).join('') +
+    '<option value="__new__">➕ Nuovo immobile…</option>';
   // fitti attesi separati quando l'inquilino riceve da più proprietari
   const ownersOfT = [...new Set(Object.values(state.movements)
     .filter(m=>m.tenantId===id && !m.ignored && m.ownerId).map(m=>m.ownerId))];
@@ -2176,7 +2357,13 @@ function saveTenant(){
   if (name) t.name = name;
   const exp = parseFloat($('tm-expected').value);
   t.expected = (!isNaN(exp) && exp>0) ? exp : null;
-  t.address = $('tm-address').value.trim();
+  // immobile (con creazione al volo)
+  let pv = $('tm-property').value;
+  if (pv === '__new__'){
+    const nn = prompt('Nome/indirizzo del nuovo immobile (es. "Via Roma 12"):');
+    pv = (nn && nn.trim()) ? createProperty(nn, nn, t.ownerId).id : (t.propertyId || '');
+  }
+  t.propertyId = pv || null;
   // attesi per proprietario (se il modulo è visibile)
   const expInputs = document.querySelectorAll('#tm-multiowner input[data-expowner]');
   if (expInputs.length){
@@ -2196,6 +2383,30 @@ function saveTenant(){
   if (sb) dbUpsertTenants([t]);
   closeModal('tenantmodal'); renderAll();
   showToast('Scheda inquilino aggiornata.');
+}
+
+/* Dettaglio cella nella vista per immobile: mostra i movimenti con il nome dell'inquilino */
+function openCellProp(propId, ym, ownerId){
+  const pr = state.properties[propId];
+  const nome = propId==='senza' ? 'Senza immobile' : (pr ? pr.name : '?');
+  const movs = activeMovements().filter(m => {
+    if (!m.tenantId) return false;
+    const t = state.tenants[m.tenantId];
+    const pid = (t && t.propertyId) || 'senza';
+    return pid===propId && movMonths(m).includes(ym) && (!ownerId || (m.ownerId||'none')===ownerId);
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+  $('cm-title').innerHTML = `🏠 ${escapeHtml(nome)} — ${monthLabel(ym)} <button class="close" onclick="closeModal('cellmodal')">×</button>`;
+  let tot = 0;
+  let html = movs.length ? movs.map(m=>{
+    const part = (m.splits && m.splits.length) ? m.splits.find(s=>s.ym===ym) : null;
+    const shown = part ? part.amount : m.amount;
+    tot += shown;
+    const t = state.tenants[m.tenantId];
+    return `<div class="mrow"><span><b>${escapeHtml(t?t.name:'?')}</b> · ${m.date.split('-').reverse().join('/')}${part?` <span class="badge warn">quota di ${fmtEur(m.amount)}</span>`:''}${m.manual?' <span class="badge man">manuale</span>':''}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,80))}</div></span><span class="amount pos">${fmtEur(shown)}</span></div>`;
+  }).join('') : '<p class="muted">Nessun pagamento in questo mese.</p>';
+  if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(tot)}</b></div>`;
+  $('cm-body').innerHTML = html;
+  openModal('cellmodal');
 }
 
 function openCell(tenantId, ym, ownerId){
@@ -2447,7 +2658,8 @@ async function confirmReset(){
   await sb.from('import_log').delete().neq('id','').then(dbErr);
   await sb.from('mappature').delete().neq('firma','').then(dbErr);
   await sb.from('proprietari').delete().neq('id','').then(dbErr);
-  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, nextId:1 };
+  await sb.from('immobili').delete().neq('id','').then(dbErr);
+  state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, properties:{}, nextId:1 };
   // disconnessione: per rientrare servono di nuovo le credenziali
   await sb.auth.signOut();
   location.reload();
@@ -2507,7 +2719,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
-    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor,
+    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor, createProperty,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
