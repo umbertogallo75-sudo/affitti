@@ -330,6 +330,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <div id="tm-movs" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 10px"></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn secondary small" id="tm-merge">🔀 Unisci a…</button>
         <button class="btn danger small" id="tm-hide"></button>
         <button class="btn danger small" id="tm-delete">🗑 Elimina definitivamente</button>
       </div>
@@ -368,7 +369,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v2.8.1';
+const APP_VERSION = 'v2.9';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -500,7 +501,7 @@ function parseCSV(text){
 const HEADER_KEYWORDS = {
   date:    [/^data\b/, /data\s*contab/, /data\s*operaz/, /data\s*mov/, /^date$/],
   dateLow: [/valuta/],
-  descTop: [/descrizione\s*estesa/, /dettagl/],
+  descTop: [/descrizione\s*estesa/, /dettagl/, /informazioni\s*sul\s*movimento/],
   descHigh:[/descriz/, /dettagl/],
   descLow: [/causale/, /operazion/, /movimento/, /description/],
   desc:    [/descriz/, /dettagl/, /causale/, /operazion/, /movimento/, /description/],
@@ -551,7 +552,7 @@ function autoDetectColumns(rows, headerIdx){
       if (map.outflow<0 && matchHeader(h,'outflow')) map.outflow=i;
       if (map.amount<0  && matchHeader(h,'amount'))  map.amount=i;
       if (map.desc<0    && matchHeader(h,'descTop')) map.desc=i;
-      if (map.cp<0      && matchHeader(h,'cp'))      map.cp=i;
+      if (map.cp<0      && matchHeader(h,'cp') && !/fiscale/i.test(String(h))) map.cp=i;   // "Cod. Fiscale Ordinante" non è un nome
     });
     // passate successive: "Descrizione estesa"/"Dettagli" (Intesa) > "Descrizione" > Causale/Operazione
     if (map.desc<0) header.forEach((h,i)=>{ if (map.desc<0 && matchHeader(h,'descHigh')) map.desc=i; });
@@ -601,6 +602,10 @@ function extractCounterparty(desc){
   if (m) return pulisci(m[1]);
   m = d.match(new RegExp('\\b(?:BONIFICO|BON|GIROCONTO|ACCREDITO|SEPA)\\b[A-Z ]*?\\bDA\\s+([A-Z][A-Z ]{2,}?)(?=\\s+(?:'+CP_STOP+')\\b|\\s*$)'));
   if (m) return pulisci(m[1]);
+  // formato Intesa "EstrattiConto" (archivio): "COD. DISP.: <16 cifre> <ORDINANTE...> <rif num> DEL <data>"
+  // l'ordinante è la sequenza di sole parole subito dopo il codice, fino alla prima cifra
+  m = d.match(/\b\d{16}\s+([A-Z][A-Z ]{2,}?)(?=\s+\d|\s*$)/);
+  if (m && m[1].split(' ').filter(w=>w.length>1).length >= 1) return pulisci(m[1]);
   // Formato reale Banca Sella (ListaMovimentiConto.xls): la descrizione è la causale
   // libera con l'ordinante in coda dopo l'ultimo " DA ", es. "FITTO MESE GENNAIO DA NOME COGNOME"
   const idx = d.lastIndexOf(' DA ');
@@ -945,6 +950,50 @@ function ignoreTenantInternal(tenantId){
     })();
   }
   return n;
+}
+
+/* Unificazione di due schede inquilino (stessa persona estratta in modi diversi dalle banche):
+   sposta movimenti e alias sulla scheda scelta ed elimina la doppia. */
+function mergeTenantsCore(fromId, toId){
+  const a = state.tenants[fromId], b = state.tenants[toId];
+  if (!a || !b || fromId===toId) return null;
+  for (const al of a.aliases) if (!b.aliases.includes(al)) b.aliases.push(al);   // memoria: i prossimi import vanno dritti
+  if (!b.expected && a.expected) b.expected = a.expected;
+  if (!b.propertyId && a.propertyId) b.propertyId = a.propertyId;
+  if (!b.ownerId && a.ownerId) b.ownerId = a.ownerId;
+  if (a.expectedByOwner) b.expectedByOwner = Object.assign({}, a.expectedByOwner, b.expectedByOwner || {});
+  let moved = 0;
+  for (const m of Object.values(state.movements)) if (m.tenantId===fromId){ m.tenantId = toId; moved++; }
+  delete state.tenants[fromId];
+  return { target: b, moved };
+}
+
+function mergeTenants(fromId, toId){
+  const a = state.tenants[fromId], b = state.tenants[toId];
+  if (!a || !b || fromId===toId) return;
+  if (!confirm(`Unificare "${a.name}" dentro "${b.name}"?\n\nTutti i movimenti e i nomi-ordinante di "${a.name}" passeranno a "${b.name}", e la scheda doppia verrà eliminata. I prossimi import riconosceranno entrambe le grafie.`)) return;
+  const res = mergeTenantsCore(fromId, toId);
+  if (sb){
+    (async ()=>{
+      await dbUpsertTenants([res.target]);
+      await sb.from('movimenti').update({ inquilino_id: toId }).eq('inquilino_id', fromId).then(dbErr);
+      await dbDeleteTenant(fromId);
+    })();
+  }
+  closeModal('tenantmodal'); closeModal('cellmodal'); renderAll();
+  showToast(`Unificati: ${res.moved} movimenti spostati su "${res.target.name}".`);
+}
+
+function openMergePicker(fromId){
+  const t = state.tenants[fromId];
+  if (!t) return;
+  const others = Object.values(state.tenants).filter(x=>x.id!==fromId).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  if (!others.length){ showToast('Non ci sono altri inquilini con cui unificare.'); return; }
+  $('cm-title').innerHTML = `🔀 Unisci "${escapeHtml(t.name)}" a… <button class="close" onclick="closeModal('cellmodal')">×</button>`;
+  $('cm-body').innerHTML = `<p class="muted">Movimenti e nomi-ordinante verranno spostati sull'inquilino scelto; questa scheda doppia verrà eliminata. (Su computer puoi anche trascinare una card sull'altra.)</p>
+    <select id="merge-target" style="margin-top:10px">${others.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select>
+    <div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn" onclick="mergeTenants('${fromId}', document.getElementById('merge-target').value)">🔀 Unifica</button></div>`;
+  openModal('cellmodal');
 }
 
 /* Eliminazione definitiva: scheda + tutti i suoi movimenti (per inquilini creati per errore) */
@@ -2000,7 +2049,11 @@ function renderInquilini(){
     const tot = Object.values(sums[t.id]||{}).reduce((a,b)=>a+b,0);
     const nMov = Object.values(state.movements).filter(m=>m.tenantId===t.id).length;
     const own = ownerName(t.ownerId);
-    html += `<div class="tcard" onclick="openTenant('${t.id}')" style="${t.ceased?'opacity:.65':''}">
+    html += `<div class="tcard" onclick="openTenant('${t.id}')" style="${t.ceased?'opacity:.65':''}"
+      draggable="true"
+      ondragstart="event.stopPropagation();window._dragT='${t.id}'"
+      ondragover="event.preventDefault()"
+      ondrop="event.preventDefault();event.stopPropagation();if(window._dragT&&window._dragT!=='${t.id}')mergeTenants(window._dragT,'${t.id}');window._dragT=null">
       <h3>${escapeHtml(t.name)} ${tenantBadge(t,sums)}</h3>
       ${t.address?`<div class="muted" style="font-size:.75rem">🏠 ${escapeHtml(t.address)}</div>`:''}
       <div class="exp">${t.expected ? 'Affitto atteso: <b>'+fmtEur(t.expected)+'</b>/mese' : 'Affitto atteso non impostato'}${own?' · 👤 '+escapeHtml(own):''}</div>
@@ -2382,6 +2435,7 @@ function openTenant(id){
     showToast(`Ordinante ignorato: ${n} movimenti accantonati.`);
   };
   $('tm-delete').onclick = ()=> deleteTenant(t.id);
+  $('tm-merge').onclick = ()=>{ closeModal('tenantmodal'); openMergePicker(t.id); };
   openModal('tenantmodal');
 }
 
@@ -2766,7 +2820,7 @@ if (typeof module !== 'undefined' && module.exports){
     findHeaderRow, autoDetectColumns, extractCounterparty, normName, namesCompatible, dedupKey,
     importMovements, classifyCp, promoteIgnoredCore, ignoreTenantInternal, createOwner, activeMovements,
     viewerTemplate, movMonth, movMonths, shiftMonth, detectAmbiguous, sumsByTenantMonth, formatSignature, deleteTenantCore, parseCausaleMonths,
-    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor, createProperty,
+    assignGroupCore, unassignedMovements, createTenant, bestTenantGuess, sumsByTenantOwner, expectedFor, createProperty, mergeTenantsCore,
     getState: ()=>state, setState: s=>{ state=s; } };
 }
 </script>
