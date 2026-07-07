@@ -368,7 +368,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v2.6';
+const APP_VERSION = 'v2.7';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1232,12 +1232,23 @@ async function analisiIA(list){
   if (!data || !Array.isArray(data.risultati)) return;
   const byKey = {};
   for (const r of data.risultati) if (r && r.chiave) byKey[r.chiave] = r;
-  let applicati = 0;
+  let applicati = 0, autoAssoc = 0;
   for (const mv of daAnalizzare){
     const r = byKey[dedupKey(mv.date, mv.amount, mv.cpNorm)];
     if (!r || (r.confidenza ?? 0) < 0.6) continue;
-    // suggerimento inquilino: preselezionato nel triage, da confermare
-    if (r.inquilino_id && state.tenants[r.inquilino_id]) aiSuggestByCp[mv.cpNorm] = r.inquilino_id;
+    if (r.inquilino_id && state.tenants[r.inquilino_id]){
+      const t = state.tenants[r.inquilino_id];
+      if ((r.confidenza ?? 0) >= 0.85 && classifyCp(mv.cpNorm) === 'new'){
+        // alta confidenza: associazione DIRETTA, senza domande — e memorizzata per sempre
+        // (l'immobile segue automaticamente: movimento → inquilino → immobile)
+        if (!t.aliases.includes(mv.cpNorm)) t.aliases.push(mv.cpNorm);
+        if (sb) dbUpsertTenants([t]);
+        autoAssoc++;
+      } else {
+        // confidenza media: proposta preselezionata nel triage, da confermare
+        aiSuggestByCp[mv.cpNorm] = r.inquilino_id;
+      }
+    }
     // mesi di competenza: applicati solo se il parser locale non aveva già deciso
     const mesi = (r.mesi || []).filter(m => /^\d{4}-\d{2}$/.test(m));
     if (!mv.autoRef && mesi.length === 1){
@@ -1251,8 +1262,10 @@ async function analisiIA(list){
       applicati++;
     }
   }
-  if (applicati || Object.keys(aiSuggestByCp).length)
-    showToast(`🤖 IA: ${Object.keys(aiSuggestByCp).length} abbinamenti proposti · ${applicati} competenze suggerite. Conferma nei prossimi passaggi.`);
+  if (autoAssoc || applicati || Object.keys(aiSuggestByCp).length)
+    showToast(`🤖 IA: ${autoAssoc} associati direttamente` +
+      (Object.keys(aiSuggestByCp).length ? ` · ${Object.keys(aiSuggestByCp).length} proposte da confermare` : '') +
+      (applicati ? ` · ${applicati} competenze suggerite` : '') + '.');
 }
 
 async function confirmImport(){
@@ -1829,7 +1842,9 @@ function renderPanoramica(){
     html += '</div>';
     mobileHtml += totChipsHtml('TOTALE ASSOLUTO', grandTot) + '</div>';
     el.innerHTML = html + mobileHtml;
+    // apertura sempre sull'ultimo periodo: scorri griglie e chip fino al mese più recente
     el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+    el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
     return;
   }
 
@@ -1874,8 +1889,9 @@ function renderPanoramica(){
   html += totChipsHtml('TOTALE ASSOLUTO', grandTot);
   html += '</div>';
   el.innerHTML = html;
-  // sulle card mobile porta a destra (mesi più recenti) lo scroll dei chip
+  // apertura sempre sull'ultimo periodo: scorri griglie e chip fino al mese più recente
   el.querySelectorAll('.monthchips').forEach(c=>{ c.scrollLeft = c.scrollWidth; });
+  el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
 }
 
 function lastMonthOf(tenantId){
