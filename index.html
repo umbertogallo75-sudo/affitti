@@ -368,7 +368,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v2.8';
+const APP_VERSION = 'v2.8.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2393,12 +2393,24 @@ function saveTenant(){
   const exp = parseFloat($('tm-expected').value);
   t.expected = (!isNaN(exp) && exp>0) ? exp : null;
   // immobile (con creazione al volo)
+  const prevProp = t.propertyId;
   let pv = $('tm-property').value;
   if (pv === '__new__'){
     const nn = prompt('Nome/indirizzo del nuovo immobile (es. "Via Roma 12"):');
     pv = (nn && nn.trim()) ? createProperty(nn, nn, t.ownerId).id : (t.propertyId || '');
   }
   t.propertyId = pv || null;
+  // cambio inquilino sull'immobile: propone di archiviare (cessare) chi c'era prima
+  if (t.propertyId && t.propertyId !== prevProp){
+    const precedenti = Object.values(state.tenants)
+      .filter(x => x.id !== t.id && x.propertyId === t.propertyId && !x.ceased && !x.hidden);
+    for (const a of precedenti){
+      if (confirm(`Sull'immobile "${propName(t.propertyId)}" risulta ancora attivo "${a.name}".\nSegnarlo come CESSATO? (resta nello storico dell'immobile, i suoi dati non si toccano)`)){
+        a.ceased = true;
+        if (sb) dbUpsertTenants([a]);
+      }
+    }
+  }
   // attesi per proprietario (se il modulo è visibile)
   const expInputs = document.querySelectorAll('#tm-multiowner input[data-expowner]');
   if (expInputs.length){
