@@ -47,6 +47,16 @@ main{max-width:1100px;margin:0 auto;padding:18px 14px 90px}
 .dropzone.drag{border-color:var(--accent);background:#f0f5ff}
 .dropzone p{color:var(--muted);margin-top:6px;font-size:.88rem}
 .dropzone .big{font-size:2.2rem}
+.fmt-steps{display:flex;align-items:stretch;gap:8px;margin-top:16px;flex-wrap:wrap}
+.fmt-step{flex:1;min-width:180px;background:#f4f7fb;border:1px solid #dde5ef;border-radius:var(--radius);padding:12px 14px}
+.fmt-step b{font-size:.85rem;display:block;margin-bottom:4px}
+.fmt-step p{font-size:.78rem;color:var(--muted);line-height:1.45;margin:0}
+.fmt-ico{font-size:1.4rem;margin-bottom:6px}
+.fmt-arrow{align-self:center;color:var(--muted);font-size:1.2rem;font-weight:700}
+@media (max-width:700px){.fmt-steps{flex-direction:column}.fmt-arrow{transform:rotate(90deg);align-self:center}}
+.ro-banner{background:#fff6e0;color:#7a5b00;border-bottom:1px solid #e8d9a8;text-align:center;padding:7px 12px;font-size:.82rem;font-weight:600}
+body.ro nav button[data-view="importa"]{display:none}
+body.ro footer button.ro-hide{display:none}
 h2{font-size:1.05rem;margin-bottom:12px}
 h3{font-size:.95rem;margin-bottom:8px}
 .muted{color:var(--muted);font-size:.85rem}
@@ -197,13 +207,33 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <div id="view-importa" style="display:none">
     <div class="card">
       <h2>Importa estratto conto</h2>
-      <p class="muted" style="margin-bottom:14px">Esporta l'estratto conto dal tuo home banking in formato <b>CSV o Excel</b> e caricalo qui. L'elaborazione avviene interamente nel tuo browser: <b>nessun dato viene inviato a server esterni</b>. Puoi caricare più estratti nel tempo: i movimenti già importati vengono riconosciuti e non duplicati.</p>
+      <p class="muted" style="margin-bottom:14px">Esporta l'estratto conto dal tuo home banking in formato <b>CSV o Excel</b> e caricalo qui. I dati restano nel tuo sistema riservato (browser + database privato); solo se il formato è sconosciuto un piccolo campione di righe viene analizzato dall'IA per capire la struttura. Puoi caricare più estratti nel tempo: i movimenti già importati vengono riconosciuti e non duplicati.</p>
       <div class="dropzone" id="dropzone">
         <div class="big">📄</div>
         <b>Trascina qui uno o più file, oppure clicca per sceglierli</b>
         <p>Formati supportati: .csv, .txt, .xlsx, .xls — separatore ; o , date gg/mm/aaaa, importi con virgola.<br>Puoi selezionare più estratti insieme: verranno elaborati uno alla volta.</p>
       </div>
       <input type="file" id="fileinput" accept=".csv,.txt,.xlsx,.xls" multiple style="display:none">
+      <div class="fmt-steps">
+        <div class="fmt-step">
+          <div class="fmt-ico">⚡</div>
+          <b>1 · Riconoscimento automatico</b>
+          <p>I formati delle tue banche (Sella, Intesa…) vengono riconosciuti subito, analizzando intestazioni e contenuto delle colonne.</p>
+        </div>
+        <div class="fmt-arrow">→</div>
+        <div class="fmt-step">
+          <div class="fmt-ico">🧠</div>
+          <b>2 · Memoria formati</b>
+          <p>Se un formato è già stato confermato in un import precedente, la mappatura delle colonne viene riutilizzata in automatico.</p>
+        </div>
+        <div class="fmt-arrow">→</div>
+        <div class="fmt-step">
+          <div class="fmt-ico">🤖</div>
+          <b>3 · Adattamento IA</b>
+          <p>Formato mai visto? L'IA analizza un campione di righe, individua da sola le colonne (data, importo, ordinante…) e ti propone la mappatura: <b>a te resta solo verificare e confermare</b>.</p>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:10px;font-size:.8rem">In ogni caso la mappatura ti viene sempre mostrata prima dell'import: nulla viene importato senza la tua conferma, e ogni formato confermato viene memorizzato per la volta successiva.</p>
     </div>
   </div>
 </main>
@@ -212,7 +242,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <span class="muted" style="font-size:.7rem;align-self:center" id="appversion"></span>
   <button onclick="exportViewer()">📤 Condividi sola lettura</button>
   <button onclick="exportBackup()">💾 Esporta backup dati</button>
-  <button onclick="resetAll()">🗑️ Azzera tutti i dati</button>
+  <button class="ro-hide" onclick="resetAll()">🗑️ Azzera tutti i dati</button>
   <button onclick="doLogout()">🚪 Esci</button>
 </footer>
 
@@ -393,7 +423,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.1';
+const APP_VERSION = 'v3.1.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -889,6 +919,19 @@ async function startApp(){
     return;
   }
   $('loginscreen').style.display = 'none';
+  // modalità sola visualizzazione (ruolo 'viewer' impostato sull'utente)
+  try {
+    const { data: udata } = await sb.auth.getUser();
+    const role = udata && udata.user && udata.user.app_metadata ? udata.user.app_metadata.role : null;
+    if (role === 'viewer' && !document.getElementById('robanner')){
+      document.body.classList.add('ro');
+      const bn = document.createElement('div');
+      bn.id = 'robanner';
+      bn.className = 'ro-banner';
+      bn.textContent = '👁 Accesso in sola visualizzazione — le modifiche sono disabilitate';
+      document.body.insertBefore(bn, document.body.firstChild);
+    }
+  } catch(e){}
   renderAll();
   subscribeRealtime();
 }
@@ -2891,6 +2934,7 @@ function showToast(msg){
 }
 
 function switchView(v){
+  if (v === 'importa' && document.body.classList.contains('ro')){ showToast('Accesso in sola visualizzazione: import disabilitato.'); return; }
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
   for (const id of ['panoramica','inquilini','daassegnare','movimenti','log','importa'])
     $('view-'+id).style.display = id===v ? '' : 'none';
