@@ -168,6 +168,9 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .badink{color:var(--bad-ink)}
 .splitink{color:#383FA3}
 .impnote{display:block;font-size:.65rem;color:var(--muted);font-weight:400;margin-top:1px}
+.covline{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;align-items:center}
+.covok{background:var(--ok);color:var(--ok-ink);font-size:.72rem;padding:4px 9px;border-radius:8px;font-weight:600;white-space:nowrap}
+.covgap{background:var(--bad);color:var(--bad-ink);font-size:.72rem;padding:4px 9px;border-radius:8px;font-weight:700;white-space:nowrap}
 .rangesel{display:flex;gap:8px;margin:2px 0 10px}
 .rangesel label{flex:1;margin:0;font-size:.72rem}
 .rangesel select{margin-top:3px}
@@ -459,7 +462,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.3.2';
+const APP_VERSION = 'v3.4';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -905,7 +908,8 @@ async function loadAll(){
     splits:r.suddivisione||null, autoRef:!!r.auto_competenza, importId:r.import_id||null });
   g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
   il.data.forEach(r => state.importLog[r.id] = { id:r.id, file:r.nome_file, quando:r.quando,
-    ownerId:r.proprietario_id, added:r.aggiunti, dups:r.duplicati, ignoredCount:r.accantonati, unassigned:r.da_assegnare });
+    ownerId:r.proprietario_id, added:r.aggiunti, dups:r.duplicati, ignoredCount:r.accantonati, unassigned:r.da_assegnare,
+    dal:r.dal||null, al:r.al||null });
   // memoria dei formati file già confermati
   state.mappings = {};
   const mp = await sb.from('mappature').select('*');
@@ -1114,6 +1118,41 @@ async function estraiContratto(tenantId){
 }
 
 /* Avvisi: scadenza contratto (N mesi prima del preavviso) e aggiornamento ISTAT (N mesi prima dell'anniversario) */
+/* Copertura degli estratti conto per un conto/proprietario: unisce i periodi (dal→al)
+   dei file importati e individua i buchi = probabili estratti saltati. */
+function coverageFor(oid){
+  const T = s => new Date(s + 'T00:00:00Z').getTime();
+  const iv = [];
+  for (const l of Object.values(state.importLog)){
+    if ((l.ownerId || 'none') !== oid) continue;
+    let dal = l.dal, al = l.al;
+    if (!dal || !al){   // vecchi import senza periodo: ricostruito dai movimenti rimasti
+      for (const m of Object.values(state.movements)){
+        if (m.importId !== l.id) continue;
+        if (!dal || m.date < dal) dal = m.date;
+        if (!al  || m.date > al)  al  = m.date;
+      }
+    }
+    if (dal && al) iv.push({ dal, al });
+  }
+  iv.sort((a,b)=>a.dal.localeCompare(b.dal));
+  const TOL = 5 * 86400000;   // fino a 5 giorni di distanza = periodi considerati contigui
+  const merged = [];
+  for (const x of iv){
+    const last = merged[merged.length-1];
+    if (last && T(x.dal) <= T(last.al) + TOL){ if (x.al > last.al) last.al = x.al; }
+    else merged.push({ dal: x.dal, al: x.al });
+  }
+  const gaps = [];
+  for (let i=1; i<merged.length; i++)
+    gaps.push({ from: merged[i-1].al, to: merged[i].dal,
+                days: Math.round((T(merged[i].dal) - T(merged[i-1].al)) / 86400000) - 1 });
+  const oggi = new Date().toISOString().slice(0,10);
+  const lastAl = merged.length ? merged[merged.length-1].al : null;
+  const staleDays = lastAl ? Math.round((T(oggi) - T(lastAl)) / 86400000) : null;
+  return { merged, gaps, lastAl, staleDays };
+}
+
 function computeAlerts(today){
   const oggi = today || new Date().toISOString().slice(0,10);
   const addMonths = (iso, delta) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); return d.toISOString().slice(0,10); };
@@ -1134,6 +1173,15 @@ function computeAlerts(today){
       if (oggi >= soglia && oggi <= ann)
         out.push({ tid:t.id, msg:`📈 ISTAT ${t.name}: aggiornamento il ${ann.split('-').reverse().join('/')}${c.istatNota?' ('+c.istatNota+')':''} — ricordati la comunicazione` });
     }
+  }
+  // estratti conto: buchi di periodo consistenti e conti non aggiornati da tempo
+  const dIt = s => s.split('-').reverse().join('/');
+  for (const o of Object.values(state.owners)){
+    const cov = coverageFor(o.id);
+    for (const g of cov.gaps)
+      if (g.days >= 20) out.push({ view:'log', msg:`🧩 ${o.name}: possibile estratto mancante dal ${dIt(g.from)} al ${dIt(g.to)} (${g.days} giorni scoperti)` });
+    if (cov.staleDays != null && cov.staleDays > 40)
+      out.push({ view:'log', msg:`⏳ ${o.name}: l'ultimo estratto arriva al ${dIt(cov.lastAl)} — sono passati ${cov.staleDays} giorni, da aggiornare` });
   }
   return out;
 }
@@ -1291,13 +1339,15 @@ async function persistImport(ownerId, res, importId){
   const log = state.importLog[importId];
   if (log) await sb.from('import_log').upsert({ id: log.id, nome_file: log.file, quando: log.quando,
     proprietario_id: log.ownerId, aggiunti: log.added, duplicati: log.dups,
-    accantonati: log.ignoredCount, da_assegnare: log.unassigned }).then(dbErr);
+    accantonati: log.ignoredCount, da_assegnare: log.unassigned,
+    dal: log.dal || null, al: log.al || null }).then(dbErr);
 }
 
 /* ---------------- Pipeline di importazione file ---------------- */
 
 let pendingRows = null, pendingHeaderIdx = -1;
 let fileQueue = [], currentFileName = '', queueTotal = 0;
+let currentFileRange = null;   // periodo (dal→al) coperto dal file in lavorazione, su TUTTE le righe datate
 
 /* Coda multi-file: ogni estratto viene elaborato in sequenza, ognuno con la sua verifica colonne */
 function handleFiles(list){
@@ -1566,9 +1616,13 @@ async function confirmImport(){
   const start = pendingHeaderIdx>=0 ? pendingHeaderIdx+1 : 0;
   const list = [];
   let skipped = 0;
+  currentFileRange = null;
   for (const r of pendingRows.slice(start)){
     const date = parseItalianDate(r[ci.date]);
     if (!date){ skipped++; continue; }
+    // periodo coperto dal file: comprende anche le uscite, così un mese senza entrate risulta comunque coperto
+    if (!currentFileRange) currentFileRange = { dal: date, al: date };
+    else { if (date < currentFileRange.dal) currentFileRange.dal = date; if (date > currentFileRange.al) currentFileRange.al = date; }
     let amount = null;
     if (ci.inflow>=0){
       const inn = parseItalianAmount(r[ci.inflow]);
@@ -1706,7 +1760,8 @@ function finishImport(list, ownerId, skipped){
   const res = importMovements(list, ownerId, importId);
   if (res.added || res.dups || res.ignoredCount || res.unassigned){
     state.importLog[importId] = { id: importId, file: currentFileName || 'import', quando: new Date().toISOString(),
-      ownerId: ownerId || null, added: res.added, dups: res.dups, ignoredCount: res.ignoredCount, unassigned: res.unassigned };
+      ownerId: ownerId || null, added: res.added, dups: res.dups, ignoredCount: res.ignoredCount, unassigned: res.unassigned,
+      dal: currentFileRange ? currentFileRange.dal : null, al: currentFileRange ? currentFileRange.al : null };
   }
   persistImport(ownerId, res, importId);
   renderAll();
@@ -1991,7 +2046,7 @@ function renderPanoramica(){
     const avvisi = computeAlerts();
     return avvisi.length ? `<div class="card" style="background:var(--warn);border-color:#E8D9A8;padding:12px 14px">
       <b>🔔 Avvisi (${avvisi.length})</b>
-      ${avvisi.map(a=>`<div class="mrow" style="border:none;padding:5px 0;cursor:pointer" onclick="openTenant('${a.tid}')">${escapeHtml(a.msg)}</div>`).join('')}
+      ${avvisi.map(a=>`<div class="mrow" style="border:none;padding:5px 0;cursor:pointer" onclick="${a.tid?`openTenant('${a.tid}')`:`switchView('log')`}">${escapeHtml(a.msg)}</div>`).join('')}
     </div>` : '';
   })() + toolbarHtml() + `
   <div class="legend">
@@ -2660,7 +2715,31 @@ function renderLog(){
   const el = $('view-log');
   const logs = Object.values(state.importLog).sort((a,b)=>b.quando.localeCompare(a.quando));
   if (!logs.length){ el.innerHTML = '<div class="card empty">Nessuna importazione registrata.</div>'; return; }
-  let html = `<h2>Log dei caricamenti</h2>
+  // ---- pannello copertura: periodi coperti dagli estratti e buchi sospetti per ogni conto ----
+  const dIt = s => s.split('-').reverse().join('/');
+  let cov = `<div class="card" style="margin-bottom:14px">
+    <h3 style="margin-bottom:6px">🧩 Copertura degli estratti conto</h3>
+    <p class="muted" style="font-size:.78rem;margin-bottom:10px">Per ogni conto vedi i periodi coperti dai file importati. Un <b>buco</b> segnala un probabile estratto saltato: importa il file mancante e sparirà. (Se il file conteneva anche uscite, il periodo è quello reale dell'estratto.)</p>`;
+  const oidsCov = [...new Set(Object.values(state.importLog).map(l=>l.ownerId||'none'))]
+    .sort((a,b)=>(a==='none'?'ZZZ':(ownerName(a)||'')).localeCompare(b==='none'?'ZZZ':(ownerName(b)||''),'it'));
+  let anyCov = false;
+  for (const oid of oidsCov){
+    const c = coverageFor(oid);
+    if (!c.merged.length) continue;
+    anyCov = true;
+    let line = '';
+    c.merged.forEach((iv,i)=>{
+      line += `<span class="covok">✓ ${dIt(iv.dal)} → ${dIt(iv.al)}</span>`;
+      if (c.gaps[i]) line += `<span class="covgap">⚠️ buco ${dIt(c.gaps[i].from)} → ${dIt(c.gaps[i].to)} · ${c.gaps[i].days} gg</span>`;
+    });
+    line += c.staleDays > 40
+      ? `<span class="covgap">⏳ fermo al ${dIt(c.lastAl)} (${c.staleDays} gg fa)</span>`
+      : `<span class="covok" style="opacity:.65">aggiornato a ${c.staleDays} gg fa</span>`;
+    cov += `<div style="margin-bottom:10px"><b style="font-size:.85rem">👤 ${escapeHtml(oid==='none'?'Senza proprietario':(ownerName(oid)||'?'))}</b><div class="covline">${line}</div></div>`;
+  }
+  cov += '</div>';
+  if (!anyCov) cov = '';
+  let html = `<h2>Log dei caricamenti</h2>` + cov + `
   <p class="muted" style="margin-bottom:12px">Ogni riga è un file importato. Puoi annullare un'intera importazione: i suoi movimenti vengono eliminati (i duplicati scartati all'epoca non vengono ripristinati altrove).</p>
   <div class="card" style="padding:6px 14px">`;
   for (const l of logs){
@@ -2668,7 +2747,7 @@ function renderLog(){
     html += `<div class="mrow">
       <div style="min-width:0">
         <b>${escapeHtml(l.file)}</b> <span class="muted">· ${new Date(l.quando).toLocaleString('it-IT',{dateStyle:'short',timeStyle:'short'})}${l.ownerId&&ownerName(l.ownerId)?' · '+escapeHtml(ownerName(l.ownerId)):''}</span>
-        <div class="muted" style="font-size:.75rem">${l.added} abbinati · ${l.unassigned||0} da assegnare · ${l.dups} duplicati · ${l.ignoredCount||0} scartati · ${still} ancora presenti</div>
+        <div class="muted" style="font-size:.75rem">${l.dal?`periodo ${l.dal.split('-').reverse().join('/')} → ${l.al.split('-').reverse().join('/')} · `:''}${l.added} abbinati · ${l.unassigned||0} da assegnare · ${l.dups} duplicati · ${l.ignoredCount||0} scartati · ${still} ancora presenti</div>
       </div>
       <button class="btn small danger" onclick="deleteImport('${l.id}')">🗑 Annulla</button>
     </div>`;
