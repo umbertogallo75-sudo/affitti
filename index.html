@@ -167,6 +167,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .trow-amt .chev{color:var(--muted);font-size:1.25rem;line-height:1}
 .badink{color:var(--bad-ink)}
 .splitink{color:#383FA3}
+.impnote{display:block;font-size:.65rem;color:var(--muted);font-weight:400;margin-top:1px}
 .rangesel{display:flex;gap:8px;margin:2px 0 10px}
 .rangesel label{flex:1;margin:0;font-size:.72rem}
 .rangesel select{margin-top:3px}
@@ -458,7 +459,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.3';
+const APP_VERSION = 'v3.3.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1874,6 +1875,28 @@ function monthLabelFull(ym){
 /* navigazione mese della panoramica mobile */
 function setMobMonth(ym){ if (!ym) return; ui.mobMonth = ym; renderPanoramica(); }
 function setMobStat(s){ ui.mobStat = (ui.mobStat===s ? 'all' : s); renderPanoramica(); }
+/* ultima importazione per conto/proprietario: data dell'import più recente
+   e data dell'ultimo movimento importato (fin dove è aggiornato il conto) */
+function lastImportLabel(oid){
+  let last = null;
+  for (const l of Object.values(state.importLog)){
+    if ((l.ownerId || 'none') !== oid) continue;
+    if (!last || (l.quando||'') > (last.quando||'')) last = l;
+  }
+  let maxDate = null;
+  for (const m of Object.values(state.movements)){
+    if (m.ignored || !m.importId) continue;
+    if ((m.ownerId || 'none') !== oid) continue;
+    if (!maxDate || m.date > maxDate) maxDate = m.date;
+  }
+  if (!last && !maxDate) return '';
+  const dIt = s => s.slice(0,10).split('-').reverse().join('/');
+  const parts = [];
+  if (last) parts.push('ultimo import ' + dIt(last.quando));
+  if (maxDate) parts.push('movimenti fino al ' + dIt(maxDate));
+  return parts.join(' · ');
+}
+
 /* modalità panoramica mobile: mese singolo oppure periodo (da → a) */
 function setMobMode(m){ ui.mobMode = m; renderPanoramica(); }
 function setMobFrom(ym){ ui.mobFrom = ym; if (ui.mobTo && ui.mobTo < ym) ui.mobTo = ym; renderPanoramica(); }
@@ -2068,6 +2091,7 @@ function renderPanoramica(){
     </div><div class="mselchips">${chips}</div>`;
   };
   const ordStat = { bad:0, warn:1, ok:2, na:3 };
+  const impNote = oid => { const s = lastImportLabel(oid); return s ? `<small class="impnote">📥 ${escapeHtml(s)}</small>` : ''; };
 
   // ---- mobile: modalità (mese singolo / periodo) e intervallo scelto ----
   const mobMode = ui.mobMode || 'mese';
@@ -2184,10 +2208,10 @@ function renderPanoramica(){
       }
       rowsH += totalRowHtml('Totale ' + g.label, gTot, 'totalrow');
       addInto(grandTot, gTot);
-      html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)}</h3><div class="tablewrap"><table class="gridtable">${headRow}${rowsH}</table></div>`;
+      html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)}${impNote(g.oid)}</h3><div class="tablewrap"><table class="gridtable">${headRow}${rowsH}</table></div>`;
       mobRows.sort((a,b)=>a.ord-b.ord);
       const gHead = mobMode==='periodo' ? (sumRange(gTot)?fmtEur(sumRange(gTot)):'—') : (gTot[selYM]?fmtEur(gTot[selYM]):'—');
-      mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gHead}</b></div>` + mobRows.map(x=>x.html).join('');
+      mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}${impNote(g.oid)}</span><b>${gHead}</b></div>` + mobRows.map(x=>x.html).join('');
       if (mobMode==='periodo') mobileHtml += totChipsRange('Totale ' + g.label, gTot);
     }
     html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
@@ -2211,7 +2235,7 @@ function renderPanoramica(){
     const gTot = {};
     for (const t of g.list) addInto(gTot, (ownSums[g.oid]||{})[t.id]);
     addInto(grandTot, gTot);
-    html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span></h3>`;
+    html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span>${impNote(g.oid)}</h3>`;
     html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(t=>rowFor(t, g.oid)).join('')}${totalRowHtml('Totale ' + g.label, gTot, 'totalrow')}</table></div>`;
   }
   html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}</table></div>`;
@@ -2224,7 +2248,7 @@ function renderPanoramica(){
     for (const g of groups){
       const gTotM = {};
       for (const t of g.list) addInto(gTotM, (ownSums[g.oid]||{})[t.id]);
-      html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${sumRange(gTotM)?fmtEur(sumRange(gTotM)):'—'}</b></div>`;
+      html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}${impNote(g.oid)}</span><b>${sumRange(gTotM)?fmtEur(sumRange(gTotM)):'—'}</b></div>`;
       for (const t of g.list){
         const att = expectedFor(t, g.oid);
         const subParts = [];
@@ -2277,7 +2301,7 @@ function renderPanoramica(){
     const vis = rows.filter(r => stat==='all' ? true : r.c.cls===stat);
     if (!vis.length) continue;
     vis.sort((a,b)=> (ordStat[a.c.cls]-ordStat[b.c.cls]) || a.t.name.localeCompare(b.t.name,'it'));
-    html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}</span><b>${gSum?fmtEur(gSum):'—'}</b></div>`;
+    html += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}${impNote(g.oid)}</span><b>${gSum?fmtEur(gSum):'—'}</b></div>`;
     for (const { t, c } of vis){
       const att = expectedFor(t, g.oid);
       const star = marks.has(t.id+'|'+selYM) && c.sum>0 ? '✱' : '';
@@ -2379,9 +2403,10 @@ function renderInquilini(){
       for (const o of owners){
         const nT = Object.values(state.tenants).filter(t=>t.ownerId===o.id).length;
         const nM = Object.values(state.movements).filter(m=>m.ownerId===o.id && !m.ignored).length;
+        const impLab = lastImportLabel(o.id);
         html += `<div class="tcard" style="cursor:default">
           <h3>👤 ${escapeHtml(o.name)}</h3>
-          <div class="muted" style="margin:4px 0 10px">${nT} inquilin${nT===1?'o':'i'} · ${nM} movimenti</div>
+          <div class="muted" style="margin:4px 0 10px">${nT} inquilin${nT===1?'o':'i'} · ${nM} movimenti${impLab?`<br>📥 ${escapeHtml(impLab)}`:''}</div>
           <div style="display:flex;gap:8px">
             <button class="btn small secondary" style="flex:1" onclick="renameOwner('${o.id}')">✏️ Rinomina</button>
             <button class="btn small danger" onclick="deleteOwner('${o.id}')">🗑 Elimina</button>
