@@ -459,7 +459,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.3.1';
+const APP_VERSION = 'v3.3.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2690,10 +2690,18 @@ function renderMovimenti(){
       tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
     const ownOpts = '<option value="">👤 —</option>' +
       ownersAll.map(o=>`<option value="${o.id}" ${o.id===m.ownerId?'selected':''}>👤 ${escapeHtml(o.name)}</option>`).join('');
+    // data (e file) dell'importazione che ha portato questo movimento
+    const impLog = m.importId ? state.importLog[m.importId] : null;
+    const impTag = m.manual
+      ? '<span class="muted" style="font-size:.68rem;white-space:nowrap">📥 inserito a mano</span>'
+      : impLog
+      ? `<span class="muted" style="font-size:.68rem;white-space:nowrap" title="File: ${escapeHtml(impLog.file||'')}">📥 importato il ${impLog.quando.slice(0,10).split('-').reverse().join('/')}</span>`
+      : '';
     html += `<div class="mrow" data-search="${escapeHtml((m.cp+' '+m.desc).toLowerCase())}">
       <div style="min-width:0">
         <b>${escapeHtml(m.cp)}</b> <span class="muted">· ${m.date.split('-').reverse().join('/')}</span>
         <div class="muted" style="font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px">${escapeHtml(m.desc)}</div>
+        ${impTag}
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${m.manual?'<span class="badge man">manuale</span>':''}
