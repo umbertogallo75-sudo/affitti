@@ -171,6 +171,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .covline{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;align-items:center}
 .covok{background:var(--ok);color:var(--ok-ink);font-size:.72rem;padding:4px 9px;border-radius:8px;font-weight:600;white-space:nowrap}
 .covgap{background:var(--bad);color:var(--bad-ink);font-size:.72rem;padding:4px 9px;border-radius:8px;font-weight:700;white-space:nowrap}
+.movgroup{background:#f1f4f8;margin:8px -14px 0;padding:8px 14px;font-size:.75rem;font-weight:700;color:var(--muted);border-top:1px solid var(--border);border-bottom:1px solid var(--border);position:sticky;top:0}
 .rangesel{display:flex;gap:8px;margin:2px 0 10px}
 .rangesel label{flex:1;margin:0;font-size:.72rem}
 .rangesel select{margin-top:3px}
@@ -462,7 +463,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.4';
+const APP_VERSION = 'v3.4.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2757,14 +2758,38 @@ function renderLog(){
 
 function renderMovimenti(){
   const el = $('view-movimenti');
-  const movs = activeMovements().sort((a,b)=>b.date.localeCompare(a.date));
+  const sort = ui.movSort || 'import';
+  // chiave di ordinamento per import: quando è stato caricato il file (i manuali usano la loro data)
+  const impQuando = m => m.importId && state.importLog[m.importId] ? state.importLog[m.importId].quando : (m.date + 'T00:00:00');
+  const movs = activeMovements().sort((a,b)=> sort==='import'
+    ? (impQuando(b).localeCompare(impQuando(a)) || b.date.localeCompare(a.date))
+    : b.date.localeCompare(a.date));
   if (!movs.length){ el.innerHTML = '<div class="card empty">Nessun movimento importato.</div>'; return; }
   const tenants = Object.values(state.tenants).sort((a,b)=>a.name.localeCompare(b.name,'it'));
   let html = `<h2>Movimenti in entrata (${movs.length})</h2>
-  <div class="searchbar"><input type="text" id="movsearch" placeholder="🔍 Cerca per ordinante o causale…" oninput="filterMovs(this.value)"></div>
+  <div class="searchbar" style="display:flex;gap:8px;flex-wrap:wrap">
+    <input type="text" id="movsearch" placeholder="🔍 Cerca per ordinante o causale…" oninput="filterMovs(this.value)" style="flex:1;min-width:200px">
+    <select style="width:auto" onchange="ui.movSort=this.value;renderMovimenti()" title="Ordinamento">
+      <option value="import" ${sort==='import'?'selected':''}>📥 Ultimi importati in alto</option>
+      <option value="data" ${sort==='data'?'selected':''}>📅 Per data movimento</option>
+    </select>
+  </div>
   <div class="card" style="padding:6px 14px" id="movlist">`;
   const ownersAll = Object.values(state.owners).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  let lastGroup = null;
   for (const m of movs){
+    // intestazione di gruppo quando si ordina per importazione: un blocco per ogni file caricato
+    if (sort==='import'){
+      const gid = m.importId || (m.manual ? '__man__' : '__altro__');
+      if (gid !== lastGroup){
+        lastGroup = gid;
+        const l = m.importId ? state.importLog[m.importId] : null;
+        const glabel = l
+          ? `📥 ${escapeHtml(l.file)} — importato il ${new Date(l.quando).toLocaleString('it-IT',{dateStyle:'short',timeStyle:'short'})}${l.ownerId&&ownerName(l.ownerId)?' · 👤 '+escapeHtml(ownerName(l.ownerId)):''}`
+          : (m.manual ? '💶 Inserimenti manuali' : '📄 Import precedenti');
+        html += `<div class="movgroup">${glabel}</div>`;
+      }
+    }
     const opts = (m.tenantId?'':'<option value="" selected>— da assegnare —</option>') +
       tenants.map(t=>`<option value="${t.id}" ${t.id===m.tenantId?'selected':''}>${escapeHtml(t.name)}</option>`).join('');
     const ownOpts = '<option value="">👤 —</option>' +
