@@ -286,6 +286,14 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <button onclick="doLogout()">🚪 Esci</button>
 </footer>
 
+<!-- Modal duplicati sospetti -->
+<div class="modal-bg" id="dupmodal">
+  <div class="modal" style="max-width:560px">
+    <h2><span>⚠️ Possibile pagamento duplicato</span> <button class="close" onclick="dupQueue=[];closeModal('dupmodal')">×</button></h2>
+    <div id="dup-body"></div>
+  </div>
+</div>
+
 <!-- Modal mappatura colonne -->
 <div class="modal-bg" id="mapmodal">
   <div class="modal" style="max-width:760px">
@@ -463,7 +471,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.4.1';
+const APP_VERSION = 'v3.5';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -887,16 +895,18 @@ const dbUpsertIgnored  = g    => sb.from('ordinanti_ignorati').upsert({ordinante
 const dbDeleteIgnored  = norm => sb.from('ordinanti_ignorati').delete().eq('ordinante_norm', norm).then(dbErr);
 
 async function loadAll(){
-  const [p,i,m,g,il,im] = await Promise.all([
+  const [p,i,m,g,il,im,dd] = await Promise.all([
     sb.from('proprietari').select('*'),
     sb.from('inquilini').select('*'),
     sb.from('movimenti').select('*'),
     sb.from('ordinanti_ignorati').select('*'),
     sb.from('import_log').select('*'),
-    sb.from('immobili').select('*')
+    sb.from('immobili').select('*'),
+    sb.from('dup_decisi').select('*')
   ]);
   for (const r of [p,i,m,g,il,im]) if (r.error) throw r.error;
   state = { tenants:{}, movements:{}, owners:{}, ignored:{}, importLog:{}, properties:{}, nextId:1 };
+  state.dupDecided = new Set(((dd && dd.data) || []).map(r => r.chiave1 + '§' + r.chiave2));
   p.data.forEach(r => state.owners[r.id] = { id:r.id, name:r.nome });
   im.data.forEach(r => state.properties[r.id] = { id:r.id, name:r.nome, address:r.indirizzo||'', ownerId:r.proprietario_id });
   i.data.forEach(r => state.tenants[r.id] = { id:r.id, name:r.nome, expected:r.atteso!=null?+r.atteso:null,
@@ -975,6 +985,8 @@ async function startApp(){
   } catch(e){}
   renderAll();
   subscribeRealtime();
+  // all'avvio: controlla se nei dati esistenti ci sono pagamenti sospetti di duplicazione
+  setTimeout(runDupScan, 900);
 }
 
 /* ---------------- Logica inquilini ---------------- */
@@ -1360,7 +1372,7 @@ function handleFiles(list){
 
 function processNextFile(){
   const f = fileQueue.shift();
-  if (!f){ queueTotal = 0; return; }
+  if (!f){ queueTotal = 0; runDupScan(); return; }   // a fine coda: controllo duplicati sospetti
   currentFileName = f.name;
   handleFile(f);
 }
@@ -3143,6 +3155,85 @@ function saveManual(){
   if (sb) dbUpsertMovs([state.movements[key]]);
   closeModal('manualmodal'); renderAll();
   showToast(`Registrato pagamento manuale di ${fmtEur(amount)} per ${t.name}.`);
+}
+
+/* ---- rilevamento duplicati sfuggiti alla dedup (stesso importo, date vicine, ordinante scritto diverso) ---- */
+let dupQueue = [];
+const dupPairKey = (k1,k2) => k1 < k2 ? k1+'§'+k2 : k2+'§'+k1;
+
+function findSuspectDuplicates(){
+  const byTenant = {};
+  for (const m of activeMovements()) if (m.tenantId) (byTenant[m.tenantId] = byTenant[m.tenantId]||[]).push(m);
+  const T = s => new Date(s+'T00:00:00Z').getTime();
+  const out = [];
+  for (const list of Object.values(byTenant)){
+    list.sort((a,b)=>a.date.localeCompare(b.date));
+    for (let i=0; i<list.length; i++){
+      for (let j=i+1; j<list.length; j++){
+        const a = list[i], b = list[j];
+        const days = Math.round((T(b.date)-T(a.date))/86400000);
+        if (days > 5) break;                      // oltre 5 giorni: normale cadenza, non sospetto
+        if (Math.abs(a.amount-b.amount) > 0.005) continue;
+        if (state.dupDecided && state.dupDecided.has(dupPairKey(a.key,b.key))) continue;
+        out.push({ a, b, days });
+      }
+    }
+  }
+  return out;
+}
+
+function runDupScan(){
+  if (document.body.classList.contains('ro')) return;   // sola visualizzazione
+  const pairs = findSuspectDuplicates();
+  if (!pairs.length) return;
+  dupQueue = pairs;
+  showNextDup();
+}
+
+function showNextDup(){
+  const pair = dupQueue.shift();
+  if (!pair){ closeModal('dupmodal'); renderAll(); return; }
+  if (!state.movements[pair.a.key] || !state.movements[pair.b.key]) return showNextDup();
+  window._dupA = pair.a.key; window._dupB = pair.b.key;
+  const t = state.tenants[pair.a.tenantId];
+  const dIt = s => s.split('-').reverse().join('/');
+  const box = (m, delBtn) => {
+    const l = m.importId ? state.importLog[m.importId] : null;
+    return `<div class="card" style="margin:8px 0;padding:12px">
+      <b>${dIt(m.date)} · ${fmtEur(m.amount)}</b>
+      <div class="muted" style="font-size:.78rem">Ordinante: ${escapeHtml(m.cp)}</div>
+      <div class="muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.desc||'')}</div>
+      <div class="muted" style="font-size:.7rem">📥 ${l ? escapeHtml(l.file)+' — importato il '+dIt(l.quando.slice(0,10)) : (m.manual ? 'inserito a mano' : '—')}</div>
+      <button class="btn small danger" style="margin-top:8px" onclick="${delBtn}">🗑 È il duplicato: elimina QUESTO</button>
+    </div>`;
+  };
+  $('dup-body').innerHTML = `
+    <p style="margin-bottom:4px"><b>${escapeHtml(t ? t.name : pair.a.cp)}</b>: due incassi di <b>${fmtEur(pair.a.amount)}</b> a ${pair.days===0?'zero giorni':pair.days+' giorn'+(pair.days===1?'o':'i')} di distanza, con ordinante scritto in modo ${pair.a.cpNorm===pair.b.cpNorm?'identico':'diverso'}.</p>
+    <p class="muted" style="font-size:.78rem;margin-bottom:6px">Se è lo stesso bonifico conteggiato due volte (es. due estratti con formati diversi), elimina una delle due copie. Se sono pagamenti veri e distinti, conferma e non verrà più chiesto.</p>
+    ${box(pair.a, 'dupElimina(_dupA)')}
+    ${box(pair.b, 'dupElimina(_dupB)')}
+    <button class="btn secondary" style="width:100%;margin-top:6px" onclick="dupTieni(_dupA,_dupB)">✓ Sono pagamenti distinti: tieni entrambi</button>
+    ${dupQueue.length?`<div class="muted" style="font-size:.7rem;margin-top:8px;text-align:right">${dupQueue.length} altr${dupQueue.length===1?'o caso':'i casi'} da controllare</div>`:''}`;
+  openModal('dupmodal');
+}
+
+function dupElimina(delKey){
+  if (state.movements[delKey]){
+    delete state.movements[delKey];
+    if (sb) dbDeleteMov(delKey);
+  }
+  showToast('Duplicato eliminato.');
+  showNextDup();
+}
+
+function dupTieni(k1, k2){
+  state.dupDecided = state.dupDecided || new Set();
+  state.dupDecided.add(dupPairKey(k1,k2));
+  if (sb){
+    const [a,b] = k1 < k2 ? [k1,k2] : [k2,k1];
+    sb.from('dup_decisi').upsert({ chiave1:a, chiave2:b }).then(dbErr);
+  }
+  showNextDup();
 }
 
 function deleteManual(key){
