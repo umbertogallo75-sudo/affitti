@@ -167,6 +167,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .trow-amt .chev{color:var(--muted);font-size:1.25rem;line-height:1}
 .badink{color:var(--bad-ink)}
 .splitink{color:#383FA3}
+.extraamt{display:block;font-size:.62rem;font-weight:700;color:#5b47c9;margin-top:1px;line-height:1.2}
 .impnote{display:block;font-size:.65rem;color:var(--muted);font-weight:400;margin-top:1px}
 .covline{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;align-items:center}
 .covok{background:var(--ok);color:var(--ok-ink);font-size:.72rem;padding:4px 9px;border-radius:8px;font-weight:600;white-space:nowrap}
@@ -472,7 +473,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.8';
+const APP_VERSION = 'v3.9';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2197,7 +2198,11 @@ function renderPanoramica(){
     for (const ym of months){
       const c = cellForOwner(t, ym, oid);
       const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
-      const label = (c.cls==='na') ? '—' : (c.sum>0 ? fmtEur(c.sum)+star : '✗');
+      // pagato più dell'atteso (es. fitto + quota imposta di registro): mostra il canone e, in piccolo, l'extra
+      const extra = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
+      const label = (c.cls==='na') ? '—'
+        : c.sum>0 ? (extra ? fmtEur(att)+star+`<span class="extraamt" title="importo oltre il canone (es. imposta di registro, conguagli)">+${fmtEur(extra)} extra</span>` : fmtEur(c.sum)+star)
+        : '✗';
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${oid}')"`;
       const isSplit = c.split && c.cls!=='na';
       r += `<td><span class="cell ${c.cls}${isSplit?' split':''}"${click}${isSplit?` data-tip="${escapeHtml(c.tip)}"`:''}>${label}</span></td>`;
@@ -2397,7 +2402,8 @@ function renderPanoramica(){
           if (c.cls!=='na') tSum += c.sum;
           const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '✱' : '';
           const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${g.oid}')"`;
-          chips += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?Math.round(c.sum)+'€'+star:'✗')}</b></span>`;
+          const extraP = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
+          chips += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?(extraP?Math.round(att):Math.round(c.sum))+'€'+star:'✗')}</b>${extraP?`<span class="extraamt">+${Math.round(extraP)}€</span>`:''}</span>`;
         }
         html += `<div class="mcard">
           <h3 onclick="openTenant('${t.id}')">${escapeHtml(t.name)}${t.ceased?' <span class="badge na">cessato</span>':''} <b style="font-variant-numeric:tabular-nums">${tSum?fmtEur(tSum):'—'}</b></h3>
@@ -2446,8 +2452,11 @@ function renderPanoramica(){
       if (t.propertyId && propName(t.propertyId)) subParts.push('🏠 ' + propName(t.propertyId));
       if (att) subParts.push('atteso ' + fmtEur(att));
       else if (!t.ceased) subParts.push('⚠️ fitto da impostare');
+      const extraM = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
       const amt = c.cls==='na' ? '<span class="muted">—</span>'
-        : c.sum>0 ? `<b class="${c.split?'splitink':''}">${fmtEur(c.sum)}${star}</b>`
+        : c.sum>0 ? (extraM
+            ? `<span style="display:flex;flex-direction:column;align-items:flex-end"><b class="${c.split?'splitink':''}">${fmtEur(att)}${star}</b><span class="extraamt">+${fmtEur(extraM)} extra</span></span>`
+            : `<b class="${c.split?'splitink':''}">${fmtEur(c.sum)}${star}</b>`)
         : '<b class="badink">✗</b>';
       const click = c.cls==='na' ? ` onclick="openTenant('${t.id}')"` : ` onclick="openCell('${t.id}','${selYM}','${g.oid}')"`;
       html += `<div class="trow ${c.cls}"${click}>
@@ -3065,7 +3074,8 @@ function openTenant(id){
     const s = sums[ym]||0;
     const cls = cellClass(s, t.expected, false, false);
     const lbl = cls==='ok'?'✓ Pagato':cls==='warn'?'△ Parziale':'✗ Mancante';
-    mh += `<tr><td style="text-align:left">${monthLabel(ym)}</td><td class="amount">${s>0?fmtEur(s):'—'}</td><td><span class="badge ${cls}">${lbl}</span></td></tr>`;
+    const extraT = (cls==='ok' && t.expected && s > t.expected + 0.01) ? s - t.expected : 0;
+    mh += `<tr><td style="text-align:left">${monthLabel(ym)}</td><td class="amount">${s>0?(extraT?fmtEur(t.expected)+`<span class="extraamt">+${fmtEur(extraT)} extra</span>`:fmtEur(s)):'—'}</td><td><span class="badge ${cls}">${lbl}</span></td></tr>`;
   }
   $('tm-months').innerHTML = mh + '</table>';
   const hideBtn = $('tm-hide');
