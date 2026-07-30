@@ -120,7 +120,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
 .amount{font-variant-numeric:tabular-nums;font-weight:600}
 .pos{color:var(--ok-ink)}
 .actionsrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.segmented{display:flex;background:#ECEBEE;border-radius:11px;padding:4px;gap:4px;margin-bottom:14px;max-width:420px}
+.segmented{display:flex;flex-wrap:wrap;background:#ECEBEE;border-radius:11px;padding:4px;gap:4px;margin-bottom:14px;max-width:420px}
 .segmented button{flex:1;border:none;background:none;padding:11px 10px;border-radius:8px;font-size:.95rem;font-weight:600;color:var(--muted);cursor:pointer}
 .segmented button.active{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .nico{display:none}
@@ -400,7 +400,8 @@ footer button:hover{background:var(--bg);color:var(--ink)}
       <div id="tc-status" class="muted" style="margin-bottom:8px"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <button class="btn small secondary" onclick="document.getElementById('tc-file').click()">⬆️ Carica PDF</button>
-        <button class="btn small secondary" id="tc-open" style="display:none">📄 Apri</button>
+        <button class="btn small secondary" id="tc-open" style="display:none">📄 Apri / Stampa</button>
+        <button class="btn small secondary" id="tc-download" style="display:none">⬇️ Scarica</button>
         <button class="btn small" id="tc-extract" style="display:none">🤖 Estrai dati con IA</button>
       </div>
       <input type="file" id="tc-file" accept=".pdf" style="display:none">
@@ -471,7 +472,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.7';
+const APP_VERSION = 'v3.8';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1082,6 +1083,61 @@ function ignoreTenantInternal(tenantId){
 
 /* ---------------- Contratti: upload, estrazione IA, avvisi ---------------- */
 
+/* apertura (visualizza/stampa dal browser) e download del PDF dall'archivio riservato */
+async function apriContratto(path){
+  const { data, error } = await sb.storage.from('contratti').createSignedUrl(path, 300);
+  if (error || !data){ showToast('Impossibile aprire il contratto: ' + (error?error.message:'')); return; }
+  window.open(data.signedUrl, '_blank');
+}
+async function scaricaContratto(path, nome){
+  const fname = 'Contratto_' + String(nome||'inquilino').replace(/[^A-Za-z0-9]+/g,'_') + '.pdf';
+  const { data, error } = await sb.storage.from('contratti').createSignedUrl(path, 300, { download: fname });
+  if (error || !data){ showToast('Impossibile scaricare il contratto: ' + (error?error.message:'')); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
+/* archivio contratti: per ogni inquilino elenca tutte le versioni presenti nel bucket */
+async function loadContrattiList(){
+  const cont = document.getElementById('contratti-list');
+  if (!cont || !sb) return;
+  const dIt = s => s.split('-').reverse().join('/');
+  const ts = Object.values(state.tenants).filter(t=>!t.hidden && t.contract && t.contract.path)
+    .sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  if (!ts.length){
+    cont.innerHTML = '<p class="muted" style="padding:10px 0">Nessun contratto caricato. Apri la scheda di un inquilino e usa «⬆️ Carica PDF».</p>';
+    return;
+  }
+  let out = '';
+  for (const t of ts){
+    let files = [];
+    try {
+      const { data } = await sb.storage.from('contratti').list(t.id, { sortBy: { column:'name', order:'desc' } });
+      files = (data || []).filter(f=>/\.pdf$/i.test(f.name));
+    } catch(e){}
+    if (!files.length) files = [{ name: t.contract.path.split('/').pop() }];
+    const cur = t.contract.path.split('/').pop();
+    const c = t.contract;
+    const righe = files.map(f=>{
+      const ts0 = parseInt(f.name);
+      const dataV = isNaN(ts0) ? '' : new Date(ts0).toLocaleDateString('it-IT');
+      const attuale = f.name === cur;
+      return `<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end">
+        <span class="muted" style="font-size:.7rem">${attuale?'<b>attuale</b>':'versione precedente'}${dataV?' · caricato il '+dataV:''}</span>
+        <button class="btn small secondary" onclick="apriContratto('${t.id}/${f.name}')">📄 Apri / Stampa</button>
+        <button class="btn small secondary" title="Scarica il PDF" onclick="scaricaContratto('${t.id}/${f.name}','${escapeHtml(t.name).replace(/'/g,'')}')">⬇️</button>
+      </div>`;
+    }).join('');
+    out += `<div class="mrow">
+      <div style="min-width:0;cursor:pointer" onclick="openTenant('${t.id}')">
+        <b>${escapeHtml(t.name)}</b>${t.ceased?' <span class="badge na">cessato</span>':''}
+        <div class="muted" style="font-size:.72rem">${c.decorrenza?'decorrenza '+dIt(c.decorrenza):''}${c.scadenza?' · scadenza '+dIt(c.scadenza):''}${c.estratto?' · 🤖 dati estratti con IA':''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">${righe}</div>
+    </div>`;
+  }
+  cont.innerHTML = out;
+}
+
 async function uploadContract(tenantId, file){
   const t = state.tenants[tenantId];
   if (!t || !sb) return;
@@ -1093,7 +1149,7 @@ async function uploadContract(tenantId, file){
   t.contract = Object.assign({}, t.contract || {}, { path });
   dbUpsertTenants([t]);
   $('tc-status').textContent = '✓ Contratto caricato';
-  $('tc-open').style.display = ''; $('tc-extract').style.display = '';
+  $('tc-open').style.display = ''; $('tc-download').style.display = ''; $('tc-extract').style.display = '';
   if (confirm('Contratto caricato. Estrarre subito i dati con l\'IA (anagrafica, canone, ISTAT, scadenza, cauzione)?')) estraiContratto(tenantId);
 }
 
@@ -2446,7 +2502,17 @@ function renderInquilini(){
     <button class="${ui.anagTab==='proprietari'?'active':''}" onclick="ui.anagTab='proprietari';renderInquilini()">👤 Proprietari</button>
     <button class="${ui.anagTab==='immobili'?'active':''}" onclick="ui.anagTab='immobili';renderInquilini()">🏠 Immobili</button>
     <button class="${ui.anagTab==='cessati'?'active':''}" onclick="ui.anagTab='cessati';renderInquilini()">🚫 Cessati${nCessati?` (${nCessati})`:''}</button>
+    <button class="${ui.anagTab==='contratti'?'active':''}" onclick="ui.anagTab='contratti';renderInquilini()">📄 Contratti</button>
   </div>`;
+
+  // ---- sotto-scheda CONTRATTI: archivio di tutti i PDF caricati, con versioni ----
+  if (ui.anagTab==='contratti'){
+    html += `<p class="muted" style="margin-bottom:12px">Archivio dei contratti caricati (inquilini attivi e cessati). Ogni PDF resta conservato per sempre nell'archivio riservato, comprese le versioni precedenti: puoi aprirlo, stamparlo o scaricarlo in qualsiasi momento.</p>
+      <div class="card" style="padding:6px 14px" id="contratti-list"><p class="muted" style="padding:10px 0">Caricamento archivio…</p></div>`;
+    el.innerHTML = html;
+    loadContrattiList();
+    return;
+  }
 
   // ---- sotto-scheda CESSATI ----
   if (ui.anagTab==='cessati'){
@@ -3016,6 +3082,7 @@ function openTenant(id){
   const c = t.contract || {};
   $('tc-status').textContent = c.path ? '✓ Contratto caricato' + (c.estratto ? ' · dati estratti con IA' : '') : 'Nessun contratto caricato.';
   $('tc-open').style.display = c.path ? '' : 'none';
+  $('tc-download').style.display = c.path ? '' : 'none';
   $('tc-extract').style.display = c.path ? '' : 'none';
   $('tc-decorrenza').value = c.decorrenza || '';
   $('tc-scadenza').value = c.scadenza || '';
@@ -3025,11 +3092,8 @@ function openTenant(id){
   $('tc-istatmesi').value = c.istatMesi ?? '';
   $('tc-istatnota').value = c.istatNota || '';
   $('tc-file').onchange = function(){ if (this.files[0]) uploadContract(t.id, this.files[0]); this.value=''; };
-  $('tc-open').onclick = async ()=>{
-    const { data, error } = await sb.storage.from('contratti').createSignedUrl(t.contract.path, 120);
-    if (error || !data) { showToast('Impossibile aprire il contratto: ' + (error?error.message:'')); return; }
-    window.open(data.signedUrl, '_blank');
-  };
+  $('tc-open').onclick = ()=> apriContratto(t.contract.path);
+  $('tc-download').onclick = ()=> scaricaContratto(t.contract.path, t.name);
   $('tc-extract').onclick = ()=> estraiContratto(t.id);
   openModal('tenantmodal');
 }
