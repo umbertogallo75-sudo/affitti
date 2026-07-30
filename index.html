@@ -471,7 +471,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.5';
+const APP_VERSION = 'v3.6';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1902,6 +1902,12 @@ function toolbarHtml(){
   </div>`;
 }
 
+/* interruttore rapido della Panoramica: includi/escludi i cessati dalla griglia */
+function togglePanCessati(){
+  ui.status = (ui.status === 'active') ? 'all' : 'active';
+  renderPanoramica();
+}
+
 function setUI(k,v){
   ui[k]=v;
   const focusSearch = k==='q';
@@ -2051,6 +2057,7 @@ function renderPanoramica(){
   <div class="actionsrow">
     <button class="btn small" onclick="openManual()">💶 Inserisci pagamento manuale</button>
     <button class="btn small secondary" onclick="exportViewer()">📤 Condividi in sola lettura</button>
+    <button class="btn small ${ui.status==='active'?'secondary':''}" onclick="togglePanCessati()" title="Include gli inquilini cessati nella griglia, così i mesi passati restano completi">👻 Vedi anche i cessati: <b>${ui.status==='active'?'NO':'SÌ'}</b></button>
   </div>
   <div class="segmented" style="max-width:360px">
     <button class="${ui.vista==='inquilini'?'active':''}" onclick="ui.vista='inquilini';renderPanoramica()">👥 Per inquilino</button>
@@ -2419,19 +2426,50 @@ function tenantBadge(t, sums){
 function renderInquilini(){
   const el = $('view-inquilini');
   const sums = sumsByTenantMonth();
-  // in Anagrafica i cessati restano SEMPRE visibili (in fondo, in grigio) per poterli riattivare
+  // i cessati hanno la loro sotto-scheda dedicata: lo storico non si perde mai
   const qn0 = normName(ui.q);
+  const nCessati = Object.values(state.tenants).filter(t=>!t.hidden && t.ceased).length;
   const tenants = Object.values(state.tenants)
-    .filter(t=>!t.hidden)
+    .filter(t=>!t.hidden && !t.ceased)
     .filter(t=>ui.owner==='all' || (t.ownerId||'none')===ui.owner)
     .filter(t=>!qn0 || normName(t.name).includes(qn0) || t.aliases.some(a=>a.includes(qn0)))
-    .sort((a,b)=>(a.ceased?1:0)-(b.ceased?1:0) || a.name.localeCompare(b.name,'it'));
+    .sort((a,b)=>a.name.localeCompare(b.name,'it'));
   let html = `<h2>Anagrafica</h2>
-  <div class="segmented">
+  <div class="segmented" style="max-width:640px">
     <button class="${ui.anagTab==='inquilini'?'active':''}" onclick="ui.anagTab='inquilini';renderInquilini()">👥 Inquilini</button>
     <button class="${ui.anagTab==='proprietari'?'active':''}" onclick="ui.anagTab='proprietari';renderInquilini()">👤 Proprietari</button>
     <button class="${ui.anagTab==='immobili'?'active':''}" onclick="ui.anagTab='immobili';renderInquilini()">🏠 Immobili</button>
+    <button class="${ui.anagTab==='cessati'?'active':''}" onclick="ui.anagTab='cessati';renderInquilini()">🚫 Cessati${nCessati?` (${nCessati})`:''}</button>
   </div>`;
+
+  // ---- sotto-scheda CESSATI ----
+  if (ui.anagTab==='cessati'){
+    const cessati = Object.values(state.tenants).filter(t=>!t.hidden && t.ceased)
+      .filter(t=>!qn0 || normName(t.name).includes(qn0) || t.aliases.some(a=>a.includes(qn0)))
+      .sort((a,b)=>a.name.localeCompare(b.name,'it'));
+    html += `<p class="muted" style="margin-bottom:12px">Gli inquilini cessati non vengono mai cancellati: lo storico resta consultabile qui e nella Panoramica attivando «👻 vedi anche i cessati». Da questa scheda puoi riattivarli in qualsiasi momento.</p>`;
+    if (!cessati.length){
+      html += '<div class="card empty">Nessun inquilino cessato.</div>';
+      el.innerHTML = html;
+      return;
+    }
+    html += '<div class="tenantgrid">';
+    for (const t of cessati){
+      const movsT = Object.values(state.movements).filter(m=>m.tenantId===t.id && !m.ignored);
+      const totT = movsT.reduce((a,m)=>a+m.amount,0);
+      const lastT = movsT.length ? movsT.map(m=>m.date).sort().pop() : null;
+      const ownT = ownerName(t.ownerId);
+      html += `<div class="tcard" onclick="openTenant('${t.id}')" style="opacity:.85">
+        <h3>${escapeHtml(t.name)} <span class="badge na">cessato</span></h3>
+        ${t.propertyId && propName(t.propertyId) ? `<div class="muted" style="font-size:.75rem">🏠 ${escapeHtml(propName(t.propertyId))}</div>` : ''}
+        <div class="muted" style="margin:4px 0 10px">${ownT?'👤 '+escapeHtml(ownT)+' · ':''}${movsT.length} bonifici · totale <span class="amount pos">${fmtEur(totT)}</span>${lastT?`<br>ultimo pagamento: ${lastT.split('-').reverse().join('/')}`:''}</div>
+        <button class="btn small" onclick="event.stopPropagation();toggleCeased('${t.id}')">↩️ Riattiva inquilino</button>
+      </div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+    return;
+  }
 
   // ---- sotto-scheda IMMOBILI ----
   if (ui.anagTab==='immobili'){
@@ -2617,7 +2655,7 @@ function toggleCeased(id){
   if (sb) dbUpsertTenants([t]);
   renderAll();
   showToast(t.ceased
-    ? `${t.name} cessato. Per annullare: Anagrafica → la sua scheda (in fondo, in grigio) → "↩️ Riattiva".`
+    ? `${t.name} cessato. Lo ritrovi in Anagrafica → 🚫 Cessati, da dove puoi riattivarlo.`
     : `${t.name} riattivato: torna nella panoramica.`);
 }
 
