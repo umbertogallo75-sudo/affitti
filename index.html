@@ -405,7 +405,7 @@ footer button:hover{background:var(--bg);color:var(--ink)}
       </div>
       <input type="file" id="tc-file" accept=".pdf" style="display:none">
       <div class="row2">
-        <div><label>Decorrenza</label><input type="date" id="tc-decorrenza"></div>
+        <div><label>Decorrenza (da qui parte il 1° fitto atteso)</label><input type="date" id="tc-decorrenza"></div>
         <div><label>Scadenza</label><input type="date" id="tc-scadenza"></div>
       </div>
       <div class="row2">
@@ -471,7 +471,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.6';
+const APP_VERSION = 'v3.7';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -870,7 +870,7 @@ function dbErr(r){
 const movRow = m => ({ chiave:m.key, data:m.date, importo:m.amount, descrizione:m.desc||'',
   ordinante:m.cp||'', ordinante_norm:m.cpNorm||'', inquilino_id:m.tenantId||null,
   proprietario_id:m.ownerId||null, ignorato:!!m.ignored, manuale:!!m.manual, mese_competenza:m.refMonth||null,
-  suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null });
+  suddivisione:m.splits||null, auto_competenza:!!m.autoRef, import_id:m.importId||null, deposito:!!m.deposit });
 const tenRow = t => ({ id:t.id, nome:t.name, atteso:t.expected, cessato:!!t.ceased,
   proprietario_id:t.ownerId||null, alias:t.aliases||[], indirizzo:t.address||null,
   attesi_per_proprietario:t.expectedByOwner||null, immobile_id:t.propertyId||null, contratto:t.contract||null });
@@ -916,7 +916,7 @@ async function loadAll(){
   m.data.forEach(r => state.movements[r.chiave] = { key:r.chiave, date:r.data, amount:+r.importo,
     desc:r.descrizione, cp:r.ordinante, cpNorm:r.ordinante_norm, tenantId:r.inquilino_id,
     ownerId:r.proprietario_id, ignored:!!r.ignorato, manual:!!r.manuale, refMonth:r.mese_competenza||null,
-    splits:r.suddivisione||null, autoRef:!!r.auto_competenza, importId:r.import_id||null });
+    splits:r.suddivisione||null, autoRef:!!r.auto_competenza, importId:r.import_id||null, deposit:!!r.deposito });
   g.data.forEach(r => state.ignored[r.ordinante_norm] = { cpNorm:r.ordinante_norm, name:r.nome });
   il.data.forEach(r => state.importLog[r.id] = { id:r.id, file:r.nome_file, quando:r.quando,
     ownerId:r.proprietario_id, added:r.aggiunti, dups:r.duplicati, ignoredCount:r.accantonati, unassigned:r.da_assegnare,
@@ -1979,6 +1979,7 @@ function setMobTo(ym){ ui.mobTo = ym; if (ui.mobFrom && ui.mobFrom > ym) ui.mobF
 function sumsByTenantMonth(){
   const sums = {};
   for (const m of activeMovements()){
+    if (m.deposit) continue;   // caparre/mensilità anticipate: non contano come canone
     const bucket = (sums[m.tenantId] = sums[m.tenantId] || {});
     if (m.splits && m.splits.length){
       for (const s of m.splits) bucket[s.ym] = (bucket[s.ym] || 0) + s.amount;
@@ -1995,7 +1996,7 @@ function sumsByTenantMonth(){
 function sumsByTenantOwner(){
   const out = {};   // ownerId → tenantId → ym → somma
   for (const m of activeMovements()){
-    if (!m.tenantId) continue;
+    if (!m.tenantId || m.deposit) continue;
     const oid = m.ownerId || 'none';
     const t = (out[oid] = out[oid] || {});
     const b = (t[m.tenantId] = t[m.tenantId] || {});
@@ -2015,7 +2016,7 @@ function expectedFor(t, ownerId){
 function autoMarks(){
   const set = new Set();
   for (const m of activeMovements()){
-    if (!m.autoRef || !m.tenantId) continue;
+    if (!m.autoRef || !m.tenantId || m.deposit) continue;
     for (const ym of movMonths(m)) set.add(m.tenantId + '|' + ym);
   }
   return set;
@@ -2050,9 +2051,12 @@ function renderPanoramica(){
   const curYM = nowYM();
   const firstMonth = {};
   for (const m of activeMovements()){
+    if (m.deposit) continue;   // la caparra non segna l'inizio dei canoni
     for (const ym of movMonths(m))
       if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym;
   }
+  // se la scheda ha la decorrenza contratto, il 1° fitto atteso parte da lì
+  const startYM = t => (t.contract && t.contract.decorrenza) ? t.contract.decorrenza.slice(0,7) : null;
   let html = `<h2>Panoramica pagamenti</h2>
   <div class="actionsrow">
     <button class="btn small" onclick="openManual()">💶 Inserisci pagamento manuale</button>
@@ -2093,7 +2097,8 @@ function renderPanoramica(){
   }
   const cellFor = (t, ym) => {
     const sum = sums[t.id]?.[ym] || 0;
-    const before = firstMonth[t.id] && ym < firstMonth[t.id];
+    const dec = startYM(t);
+    const before = dec ? ym < dec : (firstMonth[t.id] && ym < firstMonth[t.id]);
     const future = ym > curYM;
     const afterCeased = t.ceased && sum<=0 && ym > (lastMonthOf(t.id)||'0000');
     const tips = splitTips[t.id + '|' + ym];
@@ -2119,7 +2124,8 @@ function renderPanoramica(){
     const s = (ownSums[oid] && ownSums[oid][t.id]) || {};
     const mesiT = Object.keys(s).sort();
     const sum = s[ym] || 0;
-    const before = mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]);
+    const dec = startYM(t);
+    const before = dec ? ym < dec : (mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]));
     const future = ym > curYM;
     const afterCeased = t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1];
     const tips = (cellFor(t, ym) || {}).tip;   // tooltip quote multi-mese (globale)
@@ -2190,7 +2196,7 @@ function renderPanoramica(){
   const propSums = {};   // oid → propId('senza' se non collegato) → ym → somma
   const payNames = {};   // oid|propId|ym → nomi inquilini che hanno pagato
   for (const m of activeMovements()){
-    if (!m.tenantId) continue;
+    if (!m.tenantId || m.deposit) continue;
     const t0 = state.tenants[m.tenantId]; if (!t0) continue;
     const oid = m.ownerId || 'none';
     const pid = t0.propertyId || 'senza';
@@ -2859,11 +2865,13 @@ function renderMovimenti(){
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${m.manual?'<span class="badge man">manuale</span>':''}
-        ${m.autoRef?'<span class="badge ok" title="competenza letta dalla causale">✱</span>':''}
+        ${m.deposit?'<span class="badge warn" title="caparra/mensilità anticipate: non conta come canone mensile">💰 caparra</span>':''}
+        ${m.autoRef&&!m.deposit?'<span class="badge ok" title="competenza letta dalla causale">✱</span>':''}
         ${(m.splits&&m.splits.length)?`<span class="badge warn">${m.splits.length} mesi</span>`:''}
         <span class="amount pos">${fmtEur(m.amount)}</span>
         <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="reassign('${m.key}', this.value)" title="Assegna a inquilino…">${opts}</select>
         <select style="width:auto;font-size:.75rem;padding:5px 7px" onchange="changeMovOwner('${m.key}', this.value)" title="Proprietario di questo fitto">${ownOpts}</select>
+        ${m.tenantId?`<button class="delbtn" title="${m.deposit?'Non è più caparra: torna a contare come canone mensile':'Segna come caparra/mensilità anticipate: non conterà come canone mensile'}" onclick="toggleDeposit('${m.key}')">${m.deposit?'↩️':'💰'}</button>`:''}
         ${m.manual?`<button class="delbtn" title="Elimina pagamento manuale" onclick="deleteManual('${m.key}')">🗑</button>`:''}
       </div>
     </div>`;
@@ -2877,6 +2885,19 @@ function filterMovs(q){
   document.querySelectorAll('#movlist .mrow').forEach(r=>{
     r.style.display = !q || r.dataset.search.includes(q) ? '' : 'none';
   });
+}
+
+/* Caparra / mensilità anticipate: il movimento resta registrato sull'inquilino
+   ma non viene conteggiato come canone di un mese. */
+function toggleDeposit(key){
+  const m = state.movements[key];
+  if (!m) return;
+  m.deposit = !m.deposit;
+  if (sb) dbUpsertMovs([m]);
+  renderAll();
+  showToast(m.deposit
+    ? '💰 Segnato come caparra/mensilità anticipate: non conta più come canone mensile.'
+    : 'Il movimento torna a contare come canone mensile.');
 }
 
 /* Cambio del proprietario su un singolo fitto/movimento */
@@ -2959,14 +2980,17 @@ function openTenant(id){
   $('tm-aliases').innerHTML = t.aliases.map(a=>`<span class="chip">${escapeHtml(titleCase(a))}</span>`).join('') || '<span class="muted">nessuno</span>';
   const movs = Object.values(state.movements).filter(m=>m.tenantId===id && !m.ignored).sort((a,b)=>b.date.localeCompare(a.date));
   $('tm-count').textContent = movs.length;
-  $('tm-movs').innerHTML = movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} <span class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,44))}</span></span><span class="amount pos">${fmtEur(m.amount)}</span></div>`).join('') || '<p class="muted" style="padding:8px 0">Nessun movimento.</p>';
-  // riepilogo mensile (per mese di competenza, con suddivisioni)
+  $('tm-movs').innerHTML = movs.map(m=>`<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${m.deposit?'<span class="badge warn">💰 caparra</span> ':''}<span class="muted" style="font-size:.75rem">${escapeHtml(m.desc.slice(0,44))}</span></span><span class="amount pos" style="${m.deposit?'opacity:.55':''}">${fmtEur(m.amount)}</span></div>`).join('') || '<p class="muted" style="padding:8px 0">Nessun movimento.</p>';
+  // riepilogo mensile (per mese di competenza, con suddivisioni; caparre escluse)
   const sums = {};
   for (const m of movs){
+    if (m.deposit) continue;
     if (m.splits && m.splits.length) for (const s of m.splits) sums[s.ym]=(sums[s.ym]||0)+s.amount;
     else { const ym=movMonth(m); sums[ym]=(sums[ym]||0)+m.amount; }
   }
-  const first = movs.length ? movs.flatMap(movMonths).sort()[0] : null;
+  const decT = t.contract && t.contract.decorrenza ? t.contract.decorrenza.slice(0,7) : null;
+  const nonDep = movs.filter(m=>!m.deposit);
+  const first = decT || (nonDep.length ? nonDep.flatMap(movMonths).sort()[0] : null);
   const months = monthsRange().filter(ym => first && ym >= first);
   let mh = '<table><tr><th style="text-align:left">Mese</th><th>Ricevuto</th><th>Stato</th></tr>';
   const curYM = nowYM();
@@ -3121,12 +3145,15 @@ function openCell(tenantId, ym, ownerId){
     const part = (m.splits && m.splits.length) ? m.splits.find(s=>s.ym===ym) : null;
     const shown = part ? part.amount : m.amount;
     const badges = (m.manual?'<span class="badge man">manuale</span> ':'') +
-      (m.autoRef?'<span class="badge ok">✱ da causale</span> ':'') +
+      (m.deposit?'<span class="badge warn">💰 caparra — non conta come canone</span> ':'') +
+      (m.autoRef&&!m.deposit?'<span class="badge ok">✱ da causale</span> ':'') +
       (part?`<span class="badge warn">quota di ${fmtEur(m.amount)} su ${m.splits.length} mesi</span> `:'') +
       (!part && m.refMonth?'<span class="badge warn">competenza spostata</span> ':'');
-    return `<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${badges}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px">${refSel(m)}<span class="amount pos">${fmtEur(shown)}</span>${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`;
+    const depBtn = `<button class="delbtn" title="${m.deposit?'Non è più caparra':'Segna come caparra/mensilità anticipate'}" onclick="toggleDeposit('${m.key}');openCell('${tenantId}','${ym}','${ownerId||''}')">${m.deposit?'↩️':'💰'}</button>`;
+    return `<div class="mrow"><span>${m.date.split('-').reverse().join('/')} ${badges}<div class="muted" style="font-size:.75rem">${escapeHtml(m.desc)}</div></span><span style="display:flex;align-items:center;gap:6px">${m.deposit?'':refSel(m)}<span class="amount pos" style="${m.deposit?'opacity:.55':''}">${fmtEur(shown)}</span>${depBtn}${m.manual?`<button class="delbtn" title="Elimina" onclick="closeModal('cellmodal');deleteManual('${m.key}')">🗑</button>`:''}</span></div>`;
   };
   const totCell = movs.reduce((a,m)=>{
+    if (m.deposit) return a;
     const part = (m.splits && m.splits.length) ? m.splits.find(s=>s.ym===ym) : null;
     return a + (part ? part.amount : m.amount);
   }, 0);
