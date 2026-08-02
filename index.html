@@ -473,7 +473,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.9.2';
+const APP_VERSION = 'v3.10';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -3252,8 +3252,26 @@ function openCell(tenantId, ym, ownerId){
   let html = movs.length ? movs.map(rowFor).join('') : '<p class="muted">Nessun bonifico ricevuto in questo mese.</p>';
   if (movs.length) html += `<div class="mrow" style="border-top:2px solid var(--border)"><b>Totale</b><b class="amount pos">${fmtEur(totCell)}</b></div>`;
   if (t.expected) html += `<p class="muted" style="margin-top:8px">Affitto atteso: ${fmtEur(t.expected)}</p>`;
+  // mese non pagato (o pagato solo in parte): proponi la registrazione di un pagamento manuale
+  const attC = expectedFor(t, ownerId || t.ownerId);
+  if (totCell <= 0 || (attC && totCell < attC - 0.01)){
+    html += `<button class="btn" style="width:100%;margin-top:12px" onclick="closeModal('cellmodal');openManualFor('${tenantId}','${ym}')">💶 Registra un pagamento per ${monthLabel(ym)}</button>`;
+  }
   $('cm-body').innerHTML = html;
   openModal('cellmodal');
+}
+
+/* apre il modulo del pagamento manuale già precompilato su inquilino e mese */
+function openManualFor(tenantId, ym){
+  const t = state.tenants[tenantId];
+  if (!t) return;
+  openManual();
+  $('mm-search').value = t.name;
+  fillManualTenants(t.name);
+  $('mm-tenant').value = tenantId;
+  const att = expectedFor(t, t.ownerId);
+  if (att) $('mm-amount').value = att;
+  $('mm-ref').value = ym;
 }
 
 function openModal(id){ $(id).classList.add('open'); }
