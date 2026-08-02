@@ -331,10 +331,10 @@ footer button:hover{background:var(--bg);color:var(--ink)}
     <select id="mm-tenant" size="5" style="margin-top:6px;height:auto" onchange="manualTenantPicked()"></select>
     <div class="row2">
       <div><label>Importo (€)</label><input type="number" id="mm-amount" min="0" step="10" inputmode="decimal"></div>
-      <div><label>Data</label><input type="date" id="mm-date" onchange="if(this.value)document.getElementById('mm-ref').value=this.value.slice(0,7)"></div>
+      <div><label>Data</label><input type="date" id="mm-date" min="2020-01-01" max="2035-12-31" onchange="if(this.value&&+this.value.slice(0,4)>=2020)document.getElementById('mm-ref').value=this.value.slice(0,7)"></div>
     </div>
     <label>Mese di competenza (a quale mese di affitto si riferisce)</label>
-    <input type="month" id="mm-ref">
+    <input type="month" id="mm-ref" min="2020-01" max="2035-12">
     <label>Nota (opzionale)</label>
     <input type="text" id="mm-note" placeholder="es. contanti, assegno…">
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
@@ -473,7 +473,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.9.1';
+const APP_VERSION = 'v3.9.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1981,10 +1981,19 @@ function monthsRange(){
   const set = new Set();
   for (const m of activeMovements()) for (const ym of movMonths(m)) set.add(ym);
   if (!set.size) return [];
-  const arr = [...set].sort();
+  // protezione: date con anni assurdi (refusi di digitazione) non devono far esplodere la griglia
+  const arr = [...set].filter(ym => { const yy = +ym.slice(0,4); return yy >= 2000 && yy <= 2100; }).sort();
+  if (!arr.length) return [];
   const out = [];
   let [y,mo] = arr[0].split('-').map(Number);
   const [ey,emo] = arr[arr.length-1].split('-').map(Number);
+  // massimo 360 mesi: se l'intervallo è più ampio, mostra solo gli ultimi 30 anni
+  const span = (ey - y) * 12 + (emo - mo) + 1;
+  if (span > 360){
+    const startIdx = ey * 12 + (emo - 1) - 359;
+    y = Math.floor(startIdx / 12);
+    mo = (startIdx % 12) + 1;
+  }
   while (y<ey || (y===ey && mo<=emo)){
     out.push(y+'-'+pad2(mo));
     mo++; if (mo>12){ mo=1; y++; }
@@ -3290,8 +3299,11 @@ function saveManual(){
   if (!t){ showToast('Seleziona un inquilino.'); return; }
   if (isNaN(amount) || amount<=0){ showToast('Inserisci un importo valido.'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)){ showToast('Inserisci una data valida.'); return; }
+  const anno = +date.slice(0,4);
+  if (anno < 2020 || anno > 2035){ showToast('⚠️ Controlla l\'anno della data: ' + date.split('-').reverse().join('/')); return; }
   const note = $('mm-note').value.trim();
-  const ref = $('mm-ref').value;
+  let ref = $('mm-ref').value;
+  if (ref){ const ar = +ref.slice(0,4); if (ar < 2020 || ar > 2035){ showToast('⚠️ Controlla l\'anno del mese di competenza: ' + ref); return; } }
   const key = newId('manual:');
   state.movements[key] = {
     key, date, amount,
