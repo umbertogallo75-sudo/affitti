@@ -473,7 +473,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.10';
+const APP_VERSION = 'v3.10.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1236,9 +1236,12 @@ function computeAlerts(today){
       else if (oggi >= soglia) out.push({ tid:t.id, msg:`📄 Contratto di ${t.name} in scadenza il ${c.scadenza.split('-').reverse().join('/')}${c.preavvisoMesi?` — preavviso disdetta ${c.preavvisoMesi} mesi`:''}` });
     }
     if (c.istat && c.decorrenza){
-      const [ , m, dd ] = c.decorrenza.split('-');
+      const [ dy, m, dd ] = c.decorrenza.split('-');
       let ann = oggi.slice(0,4) + '-' + m + '-' + dd;
       if (ann < oggi) ann = (+oggi.slice(0,4) + 1) + '-' + m + '-' + dd;
+      // il PRIMO aggiornamento ISTAT scatta solo al primo anniversario: niente avvisi nell'anno di partenza
+      const primoAnniversario = (+dy + 1) + '-' + m + '-' + dd;
+      if (ann < primoAnniversario) ann = primoAnniversario;
       const soglia = addMonths(ann, -(c.istatMesi || 2));
       if (oggi >= soglia && oggi <= ann)
         out.push({ tid:t.id, msg:`📈 ISTAT ${t.name}: aggiornamento il ${ann.split('-').reverse().join('/')}${c.istatNota?' ('+c.istatNota+')':''} — ricordati la comunicazione` });
