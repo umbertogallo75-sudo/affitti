@@ -287,6 +287,15 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <button onclick="doLogout()">🚪 Esci</button>
 </footer>
 
+<!-- Modal carico contratti massivo -->
+<div class="modal-bg" id="ccmodal">
+  <div class="modal" style="max-width:660px">
+    <h2><span>🤖 Carico contratti</span> <button class="close" onclick="closeModal('ccmodal')">×</button></h2>
+    <p class="muted" style="font-size:.78rem;margin-top:4px">Ogni PDF viene letto dall'IA e agganciato all'inquilino: non chiudere finché tutte le righe sono ✅. Se una riga chiede la scelta dell'inquilino, seleziona e conferma.</p>
+    <div id="cc-progress" style="margin-top:8px"></div>
+  </div>
+</div>
+
 <!-- Modal duplicati sospetti -->
 <div class="modal-bg" id="dupmodal">
   <div class="modal" style="max-width:560px">
@@ -411,6 +420,10 @@ footer button:hover{background:var(--bg);color:var(--ink)}
         <div><label>Scadenza</label><input type="date" id="tc-scadenza"></div>
       </div>
       <div class="row2">
+        <div><label>Canone di partenza (scritto nel contratto)</label><input type="number" id="tc-canone" min="0" step="50" placeholder="es. 1200"></div>
+        <div><label style="color:var(--ink)">Fitto ATTUALE: campo "Affitto mensile atteso" in alto ↑</label><span class="muted" style="font-size:.72rem;display:block;margin-top:8px">Nei contratti vecchi il canone cresce con gli anni (ISTAT ecc.): qui resta quello di partenza, sopra quello vero di oggi.</span></div>
+      </div>
+      <div class="row2">
         <div><label>Preavviso disdetta (mesi)</label><input type="number" id="tc-preavviso" min="0" step="1" placeholder="es. 6"></div>
         <div><label>Cauzione pagata (€)</label><input type="number" id="tc-cauzione" min="0" step="50"></div>
       </div>
@@ -473,7 +486,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.10.1';
+const APP_VERSION = 'v3.11';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1131,12 +1144,138 @@ async function loadContrattiList(){
     out += `<div class="mrow">
       <div style="min-width:0;cursor:pointer" onclick="openTenant('${t.id}')">
         <b>${escapeHtml(t.name)}</b>${t.ceased?' <span class="badge na">cessato</span>':''}
-        <div class="muted" style="font-size:.72rem">${c.decorrenza?'decorrenza '+dIt(c.decorrenza):''}${c.scadenza?' · scadenza '+dIt(c.scadenza):''}${c.estratto?' · 🤖 dati estratti con IA':''}</div>
+        <div class="muted" style="font-size:.72rem">${c.decorrenza?'decorrenza '+dIt(c.decorrenza):''}${c.scadenza?' · scadenza '+dIt(c.scadenza):''}${c.canoneIniziale?' · partenza '+fmtEur(c.canoneIniziale):''}${t.expected&&c.canoneIniziale&&Math.abs(t.expected-c.canoneIniziale)>0.01?' · attuale '+fmtEur(t.expected):''}${c.estratto?' · 🤖 IA':''}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">${righe}</div>
     </div>`;
   }
   cont.innerHTML = out;
+}
+
+/* ---- Carico contratti massivo/singolo con IA ---- */
+
+/* applica i dati estratti dall'IA alla scheda inquilino: doppio canone, contratto, immobile */
+function applyContractData(t, d, path){
+  const c = Object.assign({}, t.contract || {}, {
+    path: path || (t.contract && t.contract.path) || null,
+    estratto: true,
+    decorrenza: d.decorrenza || (t.contract && t.contract.decorrenza) || null,
+    scadenza: d.scadenza || (t.contract && t.contract.scadenza) || null,
+    preavvisoMesi: d.preavviso_mesi || (t.contract && t.contract.preavvisoMesi) || null,
+    cauzione: d.cauzione || (t.contract && t.contract.cauzione) || null,
+    istat: !!d.istat_presente,
+    istatMesi: (t.contract && t.contract.istatMesi) || (d.istat_presente ? 2 : null),
+    istatNota: d.istat_variazione || (t.contract && t.contract.istatNota) || null,
+    canoneIniziale: d.canone_mensile || (t.contract && t.contract.canoneIniziale) || null
+  });
+  t.contract = c;
+  // fitto ATTUALE: si imposta solo se la scheda non ne ha già uno (contratti vecchi = canone cresciuto nel tempo)
+  let fittoNote = '';
+  if (d.canone_mensile){
+    if (!t.expected && !t.expectedByOwner){ t.expected = d.canone_mensile; fittoNote = 'fitto attuale impostato a ' + fmtEur(d.canone_mensile); }
+    else if (t.expected && Math.abs(t.expected - d.canone_mensile) > 0.01) fittoNote = `canone di partenza ${fmtEur(d.canone_mensile)} ≠ fitto attuale ${fmtEur(t.expected)} (ok se contratto datato)`;
+  }
+  // immobile dal contratto: sistema la scheda esistente o creane una precisa
+  let immNote = '';
+  if (d.immobile_indirizzo && d.immobile_indirizzo.trim()){
+    const addr = d.immobile_indirizzo.trim();
+    if (t.propertyId && state.properties[t.propertyId]){
+      const pr = state.properties[t.propertyId];
+      if (normName(pr.name) !== normName(addr)){
+        immNote = `immobile aggiornato: "${pr.name}" → "${addr}"`;
+        pr.name = addr; pr.address = addr;
+        if (sb) dbUpsertProperty(pr);
+      }
+    } else {
+      const gia = Object.values(state.properties).find(p=>normName(p.name)===normName(addr));
+      const pr = gia || createProperty(addr, addr, t.ownerId);
+      t.propertyId = pr.id;
+      immNote = (gia ? 'collegato all\'immobile esistente: ' : 'creato immobile: ') + addr;
+    }
+  }
+  if (sb) dbUpsertTenants([t]);
+  return { fittoNote, immNote };
+}
+
+/* coda del carico massivo: ogni PDF viene analizzato e agganciato all'inquilino giusto */
+async function caricoContratti(files){
+  const pdfs = files.filter(f=>/\.pdf$/i.test(f.name));
+  if (!pdfs.length){ showToast('Seleziona file PDF.'); return; }
+  const box = document.getElementById('cc-progress');
+  box.innerHTML = '';
+  openModal('ccmodal');
+  for (let i = 0; i < pdfs.length; i++){
+    const f = pdfs[i];
+    const rowId = 'ccrow-' + i;
+    box.insertAdjacentHTML('beforeend', `<div class="mrow" id="${rowId}"><div style="min-width:0"><b>${escapeHtml(f.name)}</b><div class="muted ccstato" style="font-size:.75rem">⏳ caricamento…</div></div></div>`);
+    const setSt = h => { const r = document.getElementById(rowId); if (r) r.querySelector('.ccstato').innerHTML = h; };
+    try {
+      // 1) upload in una cartella di transito
+      const tmpPath = 'inbox/' + Date.now() + '-' + i + '.pdf';
+      const up = await sb.storage.from('contratti').upload(tmpPath, f, { contentType:'application/pdf' });
+      if (up.error) throw new Error('upload: ' + up.error.message);
+      setSt('🤖 lettura del contratto con l\'IA… (fino a 1 minuto)');
+      // 2) analisi IA
+      const res = await sb.functions.invoke('analizza-contratto', { body: { path: tmpPath } });
+      if (res.error) throw new Error('analisi: ' + (res.error.message || res.error));
+      if (res.data.errore) throw new Error('analisi: ' + res.data.errore);
+      const d = res.data.dati || {};
+      // 3) abbinamento inquilino per nome
+      const nomeC = normName(d.nome_inquilino || '');
+      const cands = Object.values(state.tenants).filter(x=>!x.hidden &&
+        (namesCompatible(normName(x.name), nomeC) || x.aliases.some(a=>namesCompatible(a, nomeC))));
+      if (cands.length === 1){
+        await ccAssegna(rowId, tmpPath, d, cands[0].id);
+      } else {
+        // ambiguo o sconosciuto: scelta manuale (o creazione scheda nuova)
+        const opts = Object.values(state.tenants).filter(x=>!x.hidden)
+          .sort((a,b)=>a.name.localeCompare(b.name,'it'))
+          .map(x=>`<option value="${x.id}" ${cands.some(c0=>c0.id===x.id)?'selected':''}>${escapeHtml(x.name)}${x.ceased?' (cessato)':''}</option>`).join('');
+        window['_ccd'+rowId] = { path: tmpPath, dati: d };
+        setSt(`conduttore letto: <b>${escapeHtml(d.nome_inquilino||'?')}</b> — ${cands.length?'più schede possibili':'nessuna scheda corrispondente'}: scegli
+          <span style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <select id="sel-${rowId}" style="width:auto;font-size:.75rem;padding:4px 6px"><option value="__new__">➕ Crea "${escapeHtml(titleCase(d.nome_inquilino||f.name))}"</option>${opts}</select>
+          <button class="btn small" onclick="ccConferma('${rowId}')">Conferma</button></span>`);
+      }
+    } catch(e){
+      setSt('❌ ' + escapeHtml(String(e.message || e)));
+    }
+  }
+}
+
+async function ccConferma(rowId){
+  const info = window['_ccd'+rowId];
+  if (!info) return;
+  const sel = document.getElementById('sel-'+rowId);
+  let tid = sel.value;
+  if (tid === '__new__'){
+    const nome = (info.dati.nome_inquilino || '').trim() || prompt('Nome del nuovo inquilino:') || '';
+    if (!nome) return;
+    const t = createTenant(normName(nome), titleCase(nome), null);
+    if (sb) dbUpsertTenants([t]);
+    tid = t.id;
+  }
+  delete window['_ccd'+rowId];
+  await ccAssegna(rowId, info.path, info.dati, tid);
+}
+
+async function ccAssegna(rowId, tmpPath, d, tenantId){
+  const t = state.tenants[tenantId];
+  const setSt = h => { const r = document.getElementById(rowId); if (r) r.querySelector('.ccstato').innerHTML = h; };
+  if (!t){ setSt('❌ scheda inquilino non trovata'); return; }
+  // sposta il PDF dalla cartella di transito a quella dell'inquilino (versioni conservate)
+  const finale = tenantId + '/' + Date.now() + '.pdf';
+  const mv = await sb.storage.from('contratti').move(tmpPath, finale);
+  const path = mv.error ? tmpPath : finale;
+  const { fittoNote, immNote } = applyContractData(t, d, path);
+  const parti = [`✅ agganciato a <b>${escapeHtml(t.name)}</b>`,
+    d.canone_mensile ? 'canone partenza ' + fmtEur(d.canone_mensile) : null,
+    d.decorrenza ? 'decorrenza ' + d.decorrenza.split('-').reverse().join('/') : null,
+    fittoNote || null, immNote ? escapeHtml(immNote) : null,
+    d.note ? '📝 ' + escapeHtml(d.note) : null].filter(Boolean);
+  setSt(parti.join(' · '));
+  renderAll();
+  if (ui.anagTab === 'contratti') loadContrattiList();
 }
 
 async function uploadContract(tenantId, file){
@@ -1177,11 +1316,33 @@ async function estraiContratto(tenantId){
   $('tc-istat').value = d.istat_presente ? '1' : '';
   if (d.istat_presente && !$('tc-istatmesi').value) $('tc-istatmesi').value = 2;
   if (d.istat_variazione) $('tc-istatnota').value = d.istat_variazione;
-  if (d.canone_mensile && (!$('tm-expected').value || confirm(`Il contratto indica un canone di ${d.canone_mensile} €/mese (la scheda dice ${$('tm-expected').value||'—'}). Aggiornare?`)))
+  // doppia registrazione: canone di PARTENZA sempre dal contratto; il fitto ATTUALE si tocca solo se vuoto o su conferma
+  if (d.canone_mensile) $('tc-canone').value = d.canone_mensile;
+  if (d.canone_mensile && (!$('tm-expected').value || confirm(`Il contratto indica un canone di PARTENZA di ${d.canone_mensile} €/mese (fitto attuale in scheda: ${$('tm-expected').value||'—'}).\nUsare questo importo anche come fitto ATTUALE?\n(Per contratti vecchi rispondi Annulla: il fitto attuale resta quello vero di oggi.)`)))
     $('tm-expected').value = d.canone_mensile;
   if (d.nome_inquilino && d.nome_inquilino.trim() && normName(d.nome_inquilino) !== normName(t.name) &&
       confirm(`Il contratto indica come conduttore "${d.nome_inquilino}". Correggere il nome della scheda?`))
     $('tm-name').value = d.nome_inquilino.trim();
+  // immobile dal contratto: crea o sistema la scheda con l'indirizzo preciso
+  if (d.immobile_indirizzo && d.immobile_indirizzo.trim()){
+    const addr = d.immobile_indirizzo.trim();
+    if (t.propertyId && state.properties[t.propertyId]){
+      const pr = state.properties[t.propertyId];
+      if (normName(pr.name) !== normName(addr) &&
+          confirm(`Il contratto indica l'immobile: "${addr}".\nAggiornare la scheda immobile "${pr.name}" con questo indirizzo preciso?`)){
+        pr.name = addr; pr.address = addr;
+        if (sb) dbUpsertProperty(pr);
+      }
+    } else if (confirm(`Il contratto indica l'immobile: "${addr}".\nCreare la scheda immobile e collegarla a ${t.name}?`)){
+      const pr = createProperty(addr, addr, t.ownerId);
+      t.propertyId = pr.id;
+    }
+    // aggiorna la tendina immobile nel modal
+    const props2 = Object.values(state.properties).sort((a,b)=>a.name.localeCompare(b.name,'it'));
+    $('tm-property').innerHTML = '<option value="">— nessun immobile —</option>' +
+      props2.map(pr=>`<option value="${pr.id}" ${pr.id===t.propertyId?'selected':''}>🏠 ${escapeHtml(pr.name)}</option>`).join('') +
+      '<option value="__new__">➕ Nuovo immobile…</option>';
+  }
   t.contract = Object.assign({}, t.contract || {}, { estratto: true });
   $('tc-status').textContent = '✓ Contratto caricato · dati estratti con IA';
   showToast('Dati estratti dal contratto: controlla i campi e premi Salva.' + (d.note ? ' Nota: ' + d.note : ''));
@@ -2526,9 +2687,20 @@ function renderInquilini(){
     <button class="${ui.anagTab==='contratti'?'active':''}" onclick="ui.anagTab='contratti';renderInquilini()">📄 Contratti</button>
   </div>`;
 
-  // ---- sotto-scheda CONTRATTI: archivio di tutti i PDF caricati, con versioni ----
+  // ---- sotto-scheda CONTRATTI: carico massivo con IA + archivio di tutti i PDF ----
   if (ui.anagTab==='contratti'){
-    html += `<p class="muted" style="margin-bottom:12px">Archivio dei contratti caricati (inquilini attivi e cessati). Ogni PDF resta conservato per sempre nell'archivio riservato, comprese le versioni precedenti: puoi aprirlo, stamparlo o scaricarlo in qualsiasi momento.</p>
+    html += `<div class="card" style="margin-bottom:14px">
+      <h3 style="margin-bottom:6px">🤖 Carico contratti — singolo o massivo</h3>
+      <p class="muted" style="font-size:.8rem;line-height:1.55;margin-bottom:10px"><b>Cosa fa:</b> selezioni uno o più PDF di contratti e per ognuno l'IA
+      ① legge il contratto (conduttore, canone di partenza, decorrenza del 1° canone, scadenza, preavviso, ISTAT, cauzione, indirizzo dell'immobile);
+      ② lo aggancia all'inquilino giusto in anagrafica — se non lo riconosce te lo fa scegliere o crea la scheda nuova;
+      ③ aggiorna la scheda: <b>canone di partenza</b> sempre dal contratto, <b>fitto attuale</b> solo se mancante (i contratti vecchi non toccano il fitto di oggi, cresciuto con l'ISTAT);
+      ④ <b>crea o sistema la scheda immobile</b> con l'indirizzo preciso scritto nel contratto;
+      ⑤ archivia il PDF per sempre, ristampabile da qui sotto.</p>
+      <button class="btn" onclick="document.getElementById('cc-files').click()">⬆️ Scegli i PDF dei contratti</button>
+      <input type="file" id="cc-files" accept=".pdf" multiple style="display:none" onchange="caricoContratti([...this.files]); this.value='';">
+    </div>
+    <p class="muted" style="margin-bottom:12px">Archivio dei contratti caricati (inquilini attivi e cessati). Ogni PDF resta conservato per sempre nell'archivio riservato, comprese le versioni precedenti: puoi aprirlo, stamparlo o scaricarlo in qualsiasi momento.</p>
       <div class="card" style="padding:6px 14px" id="contratti-list"><p class="muted" style="padding:10px 0">Caricamento archivio…</p></div>`;
     el.innerHTML = html;
     loadContrattiList();
@@ -3108,6 +3280,7 @@ function openTenant(id){
   $('tc-extract').style.display = c.path ? '' : 'none';
   $('tc-decorrenza').value = c.decorrenza || '';
   $('tc-scadenza').value = c.scadenza || '';
+  $('tc-canone').value = c.canoneIniziale ?? '';
   $('tc-preavviso').value = c.preavvisoMesi ?? '';
   $('tc-cauzione').value = c.cauzione ?? '';
   $('tc-istat').value = c.istat ? '1' : '';
@@ -3138,6 +3311,7 @@ function saveTenant(){
   t.contract = Object.assign({}, t.contract || {}, {
     decorrenza: $('tc-decorrenza').value || null,
     scadenza: $('tc-scadenza').value || null,
+    canoneIniziale: parseFloat($('tc-canone').value) || null,
     preavvisoMesi: parseInt($('tc-preavviso').value) || null,
     cauzione: parseFloat($('tc-cauzione').value) || null,
     istat: $('tc-istat').value === '1',
