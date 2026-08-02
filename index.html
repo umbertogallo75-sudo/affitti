@@ -473,7 +473,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.9';
+const APP_VERSION = 'v3.9.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -3174,6 +3174,15 @@ function saveTenant(){
     ow = (nn && nn.trim()) ? createOwner(nn).id : (t.ownerId || '');
   }
   t.ownerId = ow || null;
+  // i movimenti dell'inquilino rimasti SENZA proprietario si allineano al proprietario della scheda
+  // (così l'inquilino compare nella sezione giusta della panoramica, non in "Senza proprietario")
+  if (t.ownerId){
+    const orfani = Object.values(state.movements).filter(m=>m.tenantId===t.id && !m.ownerId);
+    if (orfani.length){
+      for (const m of orfani) m.ownerId = t.ownerId;
+      if (sb) dbUpsertMovs(orfani);
+    }
+  }
   if (sb) dbUpsertTenants([t]);
   closeModal('tenantmodal'); renderAll();
   showToast('Scheda inquilino aggiornata.');
