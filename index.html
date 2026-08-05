@@ -287,6 +287,22 @@ footer button:hover{background:var(--bg);color:var(--ink)}
   <button onclick="doLogout()">🚪 Esci</button>
 </footer>
 
+<!-- Modal stampa panoramica in PDF -->
+<div class="modal-bg" id="printmodal">
+  <div class="modal" style="max-width:420px">
+    <h2><span>🖨 Stampa panoramica</span> <button class="close" onclick="closeModal('printmodal')">×</button></h2>
+    <p class="muted" style="margin-top:6px">Scegli il periodo: viene creato un <b>PDF orizzontale</b> con la griglia dei pagamenti divisa per proprietario, con totali mensili e totale assoluto. Include i cessati solo se attivi nella panoramica.</p>
+    <div class="row2">
+      <div><label>Dal mese</label><select id="pp-da"></select></div>
+      <div><label>Al mese</label><select id="pp-a"></select></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn secondary" onclick="closeModal('printmodal')">Annulla</button>
+      <button class="btn" id="pp-go" onclick="generaPdfPanoramica()">📄 Crea PDF</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal carico contratti massivo -->
 <div class="modal-bg" id="ccmodal">
   <div class="modal" style="max-width:660px">
@@ -486,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.11';
+const APP_VERSION = 'v3.12';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2123,6 +2139,121 @@ function toolbarHtml(){
   </div>`;
 }
 
+/* ---- Stampa panoramica in PDF orizzontale ---- */
+function loadScriptOnce(src){
+  return new Promise((res, rej)=>{
+    if (document.querySelector(`script[src="${src}"]`)) return res();
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = ()=>rej(new Error('caricamento libreria fallito'));
+    document.head.appendChild(s);
+  });
+}
+async function ensureJsPdf(){
+  if (!window.jspdf) await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  if (!window.jspdf.jsPDF.API.autoTable) await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+}
+
+function openPrintModal(){
+  const months = monthsRange();
+  if (!months.length){ showToast('Nessun dato da stampare.'); return; }
+  const opts = sel => months.map(ym=>`<option value="${ym}" ${ym===sel?'selected':''}>${monthLabelFull(ym)}</option>`).join('');
+  const cur = nowYM();
+  const daDef = months.includes(cur.slice(0,4)+'-01') ? cur.slice(0,4)+'-01' : months[0];
+  const aDef  = months.includes(cur) ? cur : months[months.length-1];
+  $('pp-da').innerHTML = opts(daDef);
+  $('pp-a').innerHTML  = opts(aDef);
+  openModal('printmodal');
+}
+
+async function generaPdfPanoramica(){
+  let da = $('pp-da').value, a = $('pp-a').value;
+  if (da > a){ const x = da; da = a; a = x; }
+  const btn = $('pp-go'); btn.disabled = true; btn.textContent = '⏳ Creo il PDF…';
+  try {
+    await ensureJsPdf();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+    const months = monthsRange().filter(ym => ym >= da && ym <= a);
+    const curYM = nowYM();
+    // stessi dati della panoramica per-inquilino (rispetta filtri e toggle cessati)
+    const sums = sumsByTenantMonth();
+    const ownSums = sumsByTenantOwner();
+    const tenants = filteredTenants(sums);
+    const firstMonth = {};
+    for (const m of activeMovements()){ if (m.deposit) continue;
+      for (const ym of movMonths(m)) if (!firstMonth[m.tenantId] || ym < firstMonth[m.tenantId]) firstMonth[m.tenantId] = ym; }
+    const conMov = new Set(Object.values(ownSums).flatMap(o=>Object.keys(o)));
+    const groups = [];
+    for (const o of Object.values(state.owners).sort((x,y)=>x.name.localeCompare(y.name,'it'))){
+      const list = tenants.filter(t => (ownSums[o.id] && ownSums[o.id][t.id]) || (!conMov.has(t.id) && t.ownerId===o.id));
+      if (list.length) groups.push({ oid:o.id, label:o.name, list });
+    }
+    const senza = tenants.filter(t => (ownSums['none'] && ownSums['none'][t.id]) || (!conMov.has(t.id) && (!t.ownerId || !state.owners[t.ownerId])));
+    if (senza.length) groups.push({ oid:'none', label:'Senza proprietario', list: senza });
+    const COL = { ok:[217,234,211], warn:[252,232,178], bad:[244,204,204], na:[238,238,238], tot:[241,239,244], grand:[28,39,51] };
+    const eur = n => n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
+    const header = () => {
+      doc.setFontSize(11); doc.setTextColor(20);
+      doc.text(`Panoramica pagamenti  ${monthLabelFull(da)} → ${monthLabelFull(a)}`, 8, 9);
+      doc.setFontSize(7.5); doc.setTextColor(110);
+      doc.text('Gallo Holding — Affitti · generato il ' + new Date().toLocaleDateString('it-IT'), 8, 13);
+    };
+    let startY = 17;
+    const grandTot = {};
+    for (const g of groups){
+      const body = [];
+      const gTot = {};
+      for (const t of g.list){
+        const att = expectedFor(t, g.oid);
+        const dec = (t.contract && t.contract.decorrenza) ? t.contract.decorrenza.slice(0,7) : null;
+        const s = (ownSums[g.oid] && ownSums[g.oid][t.id]) || {};
+        const mesiT = Object.keys(s).sort();
+        const row = [{ content: t.name + (t.ceased?' (cessato)':'') + (att ? '\natteso ' + eur(att) : ''), styles:{ halign:'left', fontStyle:'bold', fillColor:[255,255,255] } }];
+        for (const ym of months){
+          const sum = s[ym] || 0;
+          gTot[ym] = (gTot[ym]||0) + sum;
+          const before = dec ? ym < dec : (mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]));
+          const cls = cellClass(sum, att, ym > curYM || (t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1]), before);
+          const extra = (cls==='ok' && att && sum > att + 0.01) ? sum - att : 0;
+          const label = cls==='na' ? '—' : (sum>0 ? (extra ? eur(att)+'\n+'+eur(extra)+' extra' : eur(sum)) : '✗');
+          row.push({ content: label, styles:{ fillColor: COL[cls], textColor: cls==='bad' ? [143,61,61] : [30,30,30] } });
+        }
+        body.push(row);
+      }
+      const totRow = [{ content:'Totale ' + g.label, styles:{ halign:'left', fontStyle:'bold', fillColor: COL.tot } }];
+      for (const ym of months){ grandTot[ym] = (grandTot[ym]||0) + (gTot[ym]||0);
+        totRow.push({ content: gTot[ym] ? eur(gTot[ym]) : '—', styles:{ fontStyle:'bold', fillColor: COL.tot } }); }
+      body.push(totRow);
+      doc.autoTable({
+        head: [[ '👤 ' + g.label, ...months.map(monthLabel) ]],
+        body, startY,
+        styles: { fontSize: 6.6, cellPadding: 1.2, halign:'center', valign:'middle', lineColor:[220,224,230], lineWidth:0.15 },
+        headStyles: { fillColor: COL.grand, textColor: 255, fontSize: 7 },
+        columnStyles: { 0: { cellWidth: 40, halign:'left' } },
+        margin: { top: 16, left: 8, right: 8, bottom: 10 },
+        didDrawPage: header
+      });
+      startY = doc.lastAutoTable.finalY + 5;
+      if (startY > 175){ doc.addPage(); startY = 17; }
+    }
+    // totale assoluto
+    const grandRow = [{ content:'Σ TOTALE ASSOLUTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.grand, textColor:255 } }];
+    for (const ym of months) grandRow.push({ content: grandTot[ym] ? eur(grandTot[ym]) : '—', styles:{ fontStyle:'bold', fillColor: COL.grand, textColor:255 } });
+    doc.autoTable({ head: [[ '', ...months.map(monthLabel) ]], body: [grandRow], startY,
+      styles: { fontSize: 6.6, cellPadding: 1.2, halign:'center', lineColor:[220,224,230], lineWidth:0.15 },
+      headStyles: { fillColor: [120,128,140], textColor: 255, fontSize: 7 },
+      columnStyles: { 0: { cellWidth: 40, halign:'left' } },
+      margin: { top: 16, left: 8, right: 8, bottom: 10 }, didDrawPage: header });
+    doc.save(`Panoramica_${da}_${a}.pdf`);
+    closeModal('printmodal');
+    showToast('📄 PDF creato e scaricato.');
+  } catch(e){
+    showToast('Creazione PDF non riuscita: ' + (e.message || e));
+  } finally {
+    btn.disabled = false; btn.textContent = '📄 Crea PDF';
+  }
+}
+
 /* interruttore rapido della Panoramica: includi/escludi i cessati dalla griglia */
 function togglePanCessati(){
   ui.status = (ui.status === 'active') ? 'all' : 'active';
@@ -2292,6 +2423,7 @@ function renderPanoramica(){
     <button class="btn small" onclick="openManual()">💶 Inserisci pagamento manuale</button>
     <button class="btn small secondary" onclick="exportViewer()">📤 Condividi in sola lettura</button>
     <button class="btn small ${ui.status==='active'?'secondary':''}" onclick="togglePanCessati()" title="Include gli inquilini cessati nella griglia, così i mesi passati restano completi">👻 Vedi anche i cessati: <b>${ui.status==='active'?'NO':'SÌ'}</b></button>
+    <button class="btn small secondary" onclick="openPrintModal()">🖨 Stampa PDF</button>
   </div>
   <div class="segmented" style="max-width:360px">
     <button class="${ui.vista==='inquilini'?'active':''}" onclick="ui.vista='inquilini';renderPanoramica()">👥 Per inquilino</button>
