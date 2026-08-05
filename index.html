@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.12';
+const APP_VERSION = 'v3.12.1';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1074,6 +1074,14 @@ function activeMovements(){
   return Object.values(state.movements).filter(m=>!m.ignored);
 }
 
+/* nomi generici = ordinante non estratto dal file: non vanno MAI memorizzati come
+   ignorati o come alias, altrimenti inghiottirebbero i bonifici futuri di chiunque */
+function isGenericCp(cpNorm){
+  return !cpNorm || cpNorm === 'SCONOSCIUTO' ||
+    /^BONIFICO\b/.test(cpNorm) || /^ACCREDITO\b/.test(cpNorm) ||
+    /^VERSAMENTO\b/.test(cpNorm) || /^COD DISP/.test(cpNorm) || /^GIROCONTO\b/.test(cpNorm);
+}
+
 function findIgnoredFor(cpNorm){
   if (state.ignored[cpNorm]) return state.ignored[cpNorm];
   const matches = Object.values(state.ignored).filter(g=>namesCompatible(g.cpNorm, cpNorm));
@@ -1561,7 +1569,7 @@ function importMovements(list, ownerId, importId){
     const tenant = findTenantFor(mv.cpNorm);
     if (tenant){
       // abbinamento automatico (alias imparati o nome anagrafico compatibile)
-      if (!tenant.aliases.includes(mv.cpNorm)) tenant.aliases.push(mv.cpNorm);   // memoria per i prossimi import
+      if (!isGenericCp(mv.cpNorm) && !tenant.aliases.includes(mv.cpNorm)) tenant.aliases.push(mv.cpNorm);   // memoria per i prossimi import
       touchedTenants.add(tenant.id);
       state.movements[key] = { ...base, tenantId: tenant.id, ignored: false };
       added++;
@@ -1810,7 +1818,7 @@ async function analisiIA(list){
       if ((r.confidenza ?? 0) >= 0.85 && classifyCp(mv.cpNorm) === 'new'){
         // alta confidenza: associazione DIRETTA, senza domande — e memorizzata per sempre
         // (l'immobile segue automaticamente: movimento → inquilino → immobile)
-        if (!t.aliases.includes(mv.cpNorm)) t.aliases.push(mv.cpNorm);
+        if (!isGenericCp(mv.cpNorm) && !t.aliases.includes(mv.cpNorm)) t.aliases.push(mv.cpNorm);
         if (sb) dbUpsertTenants([t]);
         autoAssoc++;
       } else {
@@ -1978,8 +1986,12 @@ function triageConfirm(){
     const g = pendingImport.list.find(m=>m.cpNorm===cpNorm);
     const display = titleCase(g ? g.cp : cpNorm);
     if (sel.value==='ignore'){
-      state.ignored[cpNorm] = { cpNorm, name: display };
-      if (sb) dbUpsertIgnored(state.ignored[cpNorm]);
+      if (isGenericCp(cpNorm)){
+        showToast(`⚠️ "${display}" è un nome generico (ordinante non letto dal file): non viene ignorato per sempre, resta tra i bonifici da assegnare.`);
+      } else {
+        state.ignored[cpNorm] = { cpNorm, name: display };
+        if (sb) dbUpsertIgnored(state.ignored[cpNorm]);
+      }
     } else if (sel.value==='create'){
       const t = createTenant(cpNorm, display, pendingImport.ownerId);
       if (sb) dbUpsertTenants([t]);
@@ -1987,7 +1999,7 @@ function triageConfirm(){
     } else if (sel.value.startsWith('assign:')){
       const t = state.tenants[sel.value.slice(7)];
       if (t){
-        if (!t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
+        if (!isGenericCp(cpNorm) && !t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
         if (sb) dbUpsertTenants([t]);
       }
     }
@@ -3061,7 +3073,7 @@ function toggleCeased(id){
 function assignGroupCore(cpNorm, tenantId){
   const t = state.tenants[tenantId];
   if (!t) return null;
-  if (!t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
+  if (!isGenericCp(cpNorm) && !t.aliases.includes(cpNorm)) t.aliases.push(cpNorm);   // memoria per i prossimi import
   const changed = [];
   for (const m of Object.values(state.movements)){
     if (!m.ignored && !m.tenantId && m.cpNorm===cpNorm){ m.tenantId = t.id; changed.push(m); }
@@ -3095,6 +3107,7 @@ function createFromGroup(cpNorm){
 function ignoreGroup(cpNorm){
   const movs = unassignedMovements().filter(m=>m.cpNorm===cpNorm);
   const display = titleCase(movs[0] ? movs[0].cp : cpNorm);
+  if (isGenericCp(cpNorm)){ showToast('⚠️ Nome generico (ordinante non letto dal file): non può essere scartato per sempre — assegnalo all\'inquilino giusto o lascialo qui.'); return; }
   if (!confirm(`Scartare per sempre "${display}"?\nI suoi bonifici, presenti e futuri, verranno accantonati automaticamente (reversibile dalla sezione Anagrafica → Ordinanti ignorati).`)) return;
   state.ignored[cpNorm] = { cpNorm, name: display };
   const changed = [];
@@ -3312,7 +3325,7 @@ function reassign(key, newTenantId){
   }
   const oldIds = new Set();
   for (const k of keys){ oldIds.add(state.movements[k].tenantId); state.movements[k].tenantId = newTenantId; }
-  if (!target.aliases.includes(mv.cpNorm)) target.aliases.push(mv.cpNorm);
+  if (!isGenericCp(mv.cpNorm) && !target.aliases.includes(mv.cpNorm)) target.aliases.push(mv.cpNorm);
   // elimina schede rimaste vuote (auto-create)
   const removedTenants = [];
   for (const oid of oldIds){
