@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.12.1';
+const APP_VERSION = 'v3.12.2';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -1643,6 +1643,18 @@ function handleFile(file){
         try{
           const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array', cellDates:true});
           const ws = wb.Sheets[wb.SheetNames[0]];
+          // alcuni export bancari (es. Intesa) dichiarano un'area dati SBAGLIATA e troncano
+          // il foglio: ricalcola il range reale dalle celle effettivamente presenti
+          let maxR = 0, maxC = 0;
+          for (const k in ws){
+            if (k[0] === '!') continue;
+            const mm = k.match(/^([A-Z]+)(\d+)$/);
+            if (!mm) continue;
+            const cc = XLSX.utils.decode_col(mm[1]);
+            if (+mm[2] > maxR) maxR = +mm[2];
+            if (cc > maxC) maxC = cc;
+          }
+          if (maxR) ws['!ref'] = 'A1:' + XLSX.utils.encode_col(maxC) + maxR;
           const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
           startMapping(rows.filter(r=>r.some(c=>String(c).trim()!=='')));
         }catch(err){ showToast('Impossibile leggere il file Excel: ' + err.message); processNextFile(); }
