@@ -506,7 +506,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.17';
+const APP_VERSION = 'v3.18';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2301,7 +2301,6 @@ async function generaPdfPanoramica(){
     let startY = 17;
     const grandTot = {};
     const arretrati = [];   // riepilogo finale: chi ha mesi non pagati e quanto deve
-    const prevTot = {};     // totale previsto per mese (somma dei fitti attesi dovuti)
     const mancTot = {};     // mancante per mese (atteso non incassato)
     for (const g of groups){
       const body = [];
@@ -2326,7 +2325,6 @@ async function generaPdfPanoramica(){
             if (att) dovuto += att - Math.min(sum, att);
           }
           if (cls !== 'na' && att){
-            prevTot[ym] = (prevTot[ym]||0) + att;
             mancTot[ym] = (mancTot[ym]||0) + Math.max(0, att - sum);
           }
           row.push({ content: label, styles:{ fillColor: COL[cls], textColor: cls==='bad' ? [143,61,61] : [30,30,30] } });
@@ -2358,7 +2356,8 @@ async function generaPdfPanoramica(){
     const mancRow = [{ content:'MANCANTE', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.bad, textColor:[143,61,61] } }];
     for (const ym of months) mancRow.push({ content: mancTot[ym] > 0.005 ? eur(mancTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.bad, textColor:[143,61,61] } });
     const prevRow = [{ content:'TOTALE PREVISTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.tot } }];
-    for (const ym of months) prevRow.push({ content: prevTot[ym] ? eur(prevTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.tot } });
+    for (const ym of months){ const v = (grandTot[ym]||0) + (mancTot[ym]||0);
+      prevRow.push({ content: v ? eur(v) : '-', styles:{ fontStyle:'bold', fillColor: COL.tot } }); }
     doc.autoTable({ head: [[ '', ...months.map(monthLabel) ]], body: [grandRow, mancRow, prevRow], startY,
       styles: { fontSize: 7.6, cellPadding: 1.8, halign:'center', lineColor:[225,229,235], lineWidth:0.1 },
       headStyles: { fillColor: [120,128,140], textColor: 255, fontSize: 8 },
@@ -2660,20 +2659,20 @@ function renderPanoramica(){
     const isSplit = !!(cellFor(t, ym) || {}).split && sum>0;
     return { sum, cls: cellClass(sum, expectedFor(t, oid), future || afterCeased, before), split:isSplit, tip:tips||'' };
   };
-  // MANCANTE e TOTALE PREVISTO per mese (stessi conteggi del PDF): atteso dovuto vs incassato
-  const prevTot = {}, mancTot = {};
+  // MANCANTE per mese: quota di fitto atteso non incassata (per inquilino, senza compensazioni)
+  const mancTot = {};
   for (const g of groups) for (const t of g.list){
     const attG = expectedFor(t, g.oid);
     if (!attG) continue;
     for (const ym of months){
       const cG = cellForOwner(t, ym, g.oid);
       if (cG.cls === 'na') continue;
-      prevTot[ym] = (prevTot[ym]||0) + attG;
       mancTot[ym] = (mancTot[ym]||0) + Math.max(0, attG - cG.sum);
     }
   }
-  const mancRowHtml = `<tr class="mancrow"><td>Mancante</td>` + months.map(ym=>`<td>${mancTot[ym]>0.005?fmtEur(mancTot[ym]):'—'}</td>`).join('') + '</tr>';
-  const prevRowHtml = `<tr class="prevrow"><td>Totale previsto</td>` + months.map(ym=>`<td>${prevTot[ym]?fmtEur(prevTot[ym]):'—'}</td>`).join('') + '</tr>';
+  // TOTALE PREVISTO = incassato + mancante (quanto avresti se tutti saldassero): i conti tornano sempre
+  const mancRowHtml = () => `<tr class="mancrow"><td>Mancante</td>` + months.map(ym=>`<td>${mancTot[ym]>0.005?fmtEur(mancTot[ym]):'—'}</td>`).join('') + '</tr>';
+  const prevRowHtml = () => `<tr class="prevrow"><td>Totale previsto</td>` + months.map(ym=>{ const v = (grandTot[ym]||0) + (mancTot[ym]||0); return `<td>${v?fmtEur(v):'—'}</td>`; }).join('') + '</tr>';
 
   const rowFor = (t, oid) => {
     const ceasedBadge = t.ceased ? ' <span class="badge na">cessato</span>' : '';
@@ -2842,13 +2841,15 @@ function renderPanoramica(){
       mobileHtml += `<div class="ghead"><span>👤 ${escapeHtml(g.label)}${impNote(g.oid)}</span><b>${gHead}</b></div>` + mobRows.map(x=>x.html).join('');
       if (mobMode==='periodo') mobileHtml += totChipsRange('Totale ' + g.label, gTot);
     }
-    html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}${mancRowHtml}${prevRowHtml}</table></div>`;
+    html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}${mancRowHtml()}${prevRowHtml()}</table></div>`;
     html += '</div>';
+    const prevTotI = {};
+    months.forEach(ym => prevTotI[ym] = (grandTot[ym]||0) + (mancTot[ym]||0));
     mobileHtml += (mobMode==='periodo'
-      ? totChipsRange('TOTALE ASSOLUTO', grandTot) + totChipsRange('MANCANTE', mancTot) + totChipsRange('TOTALE PREVISTO', prevTot)
+      ? totChipsRange('TOTALE ASSOLUTO', grandTot) + totChipsRange('MANCANTE', mancTot) + totChipsRange('TOTALE PREVISTO', prevTotI)
       : `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div></div><div class="trow-amt"><b>${grandTot[selYM]?fmtEur(grandTot[selYM]):'—'}</b></div></div>`
         + `<div class="trow bad"><div class="trow-main"><div class="trow-name">Mancante</div><div class="trow-sub">se tutti avessero pagato l'atteso</div></div><div class="trow-amt"><b class="badink">${mancTot[selYM]>0.005?fmtEur(mancTot[selYM]):'—'}</b></div></div>`
-        + `<div class="trow"><div class="trow-main"><div class="trow-name">Totale previsto</div><div class="trow-sub">somma dei fitti attesi del mese</div></div><div class="trow-amt"><b>${prevTot[selYM]?fmtEur(prevTot[selYM]):'—'}</b></div></div>`) + '</div>';
+        + `<div class="trow"><div class="trow-main"><div class="trow-name">Totale previsto</div><div class="trow-sub">incassato + mancante</div></div><div class="trow-amt"><b>${prevTotI[selYM]?fmtEur(prevTotI[selYM]):'—'}</b></div></div>`) + '</div>';
     el.innerHTML = html + mobileHtml;
     // apertura sempre sull'ultimo periodo: scorri griglie fino al mese più recente e centra il mese attivo
     el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
@@ -2868,7 +2869,7 @@ function renderPanoramica(){
     html += `<h3 style="margin:16px 2px 8px">👤 ${escapeHtml(g.label)} <span class="muted" style="font-weight:400">· ${g.list.length} inquilin${g.list.length===1?'o':'i'}</span>${impNote(g.oid)}</h3>`;
     html += `<div class="tablewrap"><table class="gridtable">${headRow}${g.list.map(t=>rowFor(t, g.oid)).join('')}${totalRowHtml('Totale ' + g.label, gTot, 'totalrow')}</table></div>`;
   }
-  html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}${mancRowHtml}${prevRowHtml}</table></div>`;
+  html += `<h3 style="margin:20px 2px 8px">Σ Complessivo</h3><div class="tablewrap"><table class="gridtable">${headRow}${totalRowHtml('Totale assoluto', grandTot, 'grandrow')}${mancRowHtml()}${prevRowHtml()}</table></div>`;
   html += '</div>';
   // ---- vista mobile PER INQUILINO ----
   html += '<div class="only-mobile">' + modeToggle;
@@ -2902,7 +2903,9 @@ function renderPanoramica(){
     }
     html += totChipsRange('TOTALE ASSOLUTO', grandTot);
     html += totChipsRange('MANCANTE', mancTot);
-    html += totChipsRange('TOTALE PREVISTO', prevTot);
+    const prevTotM = {};
+    months.forEach(ym => prevTotM[ym] = (grandTot[ym]||0) + (mancTot[ym]||0));
+    html += totChipsRange('TOTALE PREVISTO', prevTotM);
     html += '</div>';
     el.innerHTML = html;
     el.querySelectorAll('.tablewrap').forEach(w=>{ w.scrollLeft = w.scrollWidth; });
@@ -2960,7 +2963,7 @@ function renderPanoramica(){
   }
   html += `<div class="trow grand"><div class="trow-main"><div class="trow-name">Σ Totale ${monthLabelFull(selYM)}</div><div class="trow-sub">tutti i proprietari</div></div><div class="trow-amt"><b>${grandSel?fmtEur(grandSel):'—'}</b></div></div>`;
   html += `<div class="trow bad"><div class="trow-main"><div class="trow-name">Mancante</div><div class="trow-sub">se tutti avessero pagato l'atteso</div></div><div class="trow-amt"><b class="badink">${mancTot[selYM]>0.005?fmtEur(mancTot[selYM]):'—'}</b></div></div>`;
-  html += `<div class="trow"><div class="trow-main"><div class="trow-name">Totale previsto</div><div class="trow-sub">somma dei fitti attesi del mese</div></div><div class="trow-amt"><b>${prevTot[selYM]?fmtEur(prevTot[selYM]):'—'}</b></div></div>`;
+  html += `<div class="trow"><div class="trow-main"><div class="trow-name">Totale previsto</div><div class="trow-sub">incassato + mancante</div></div><div class="trow-amt"><b>${(grandSel+(mancTot[selYM]||0))?fmtEur(grandSel+(mancTot[selYM]||0)):'—'}</b></div></div>`;
   html += '</div>';
   el.innerHTML = html;
   // apertura sempre sull'ultimo periodo: scorri griglie fino al mese più recente e centra il mese attivo
