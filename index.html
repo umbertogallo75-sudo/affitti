@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.13';
+const APP_VERSION = 'v3.14';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -797,7 +797,7 @@ function parseCausaleMonths(desc, dateISO){
                   MESE_NOME[prev]!==undefined || MESE_ABBR[prev]!==undefined;
       if (ctx) mo = MESE_ABBR[tk];
     }
-    if (mo) found.push({ mo, year: null, idx: i });
+    if (mo) found.push({ mo, year: null, idx: i, tk });
   }
   if (!found.length) return [];
   // anni espliciti: si applicano ai mesi precedenti senza anno (es. "GENNAIO FEBBRAIO 2026")
@@ -807,11 +807,18 @@ function parseCausaleMonths(desc, dateISO){
       for (const f of found) if (f.idx < i && f.year===null) f.year = y;
     }
   }
-  // intervallo "DA GENNAIO A MARZO": espandi i mesi intermedi
+  // intervallo di mesi: "DA GENNAIO A MARZO", "GENNAIO-AGOSTO", "GENNAIO/AGOSTO", "GENNAIO AD AGOSTO"
+  let wasRange = false;
   if (found.length===2){
-    const between = toks.slice(found[0].idx+1, found[1].idx).join(' ');
-    const isRange = toks[found[0].idx-1]==='DA' && /^A$|\bA$/.test(between.trim());
+    const between = toks.slice(found[0].idx+1, found[1].idx).join(' ').trim();
+    const conDaA = toks[found[0].idx-1]==='DA' && /^A$|\bA$/.test(between);
+    const conAd = between==='A' || between==='AD' || between==='AL';
+    // trattino o barra nel testo ORIGINALE tra i due nomi di mese (normName li elimina)
+    const conTrattino = between==='' &&
+      new RegExp(found[0].tk + '\\s*[-–—/]\\s*' + found[1].tk, 'i').test(normName ? desc.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase() : desc);
+    const isRange = conDaA || conAd || conTrattino;
     if (isRange){
+      wasRange = true;
       const exp = [];
       let cur = found[0].mo, y = found[0].year;
       for (let g=0; g<12; g++){
@@ -821,6 +828,15 @@ function parseCausaleMonths(desc, dateISO){
         if (cur===1 && y!==null) y++;
       }
       found.length = 0; found.push(...exp);
+      // anno dichiarato dopo il secondo mese: vale per tutto l'intervallo
+      for (let i=0;i<toks.length;i++){
+        if (/^20\d\d$/.test(toks[i])){
+          const y2 = +toks[i];
+          let anno = y2;
+          for (let j=exp.length-1; j>=0; j--){ exp[j].year = anno; if (exp[j].mo===1 && j>0) anno--; }
+          break;
+        }
+      }
     }
   }
   // anno mancante: il candidato più vicino alla data del bonifico (arretrati più probabili degli anticipi lontani)
@@ -843,7 +859,8 @@ function parseCausaleMonths(desc, dateISO){
     return best;
   };
   const out = [...new Set(found.map(resolve).filter(Boolean))].sort();
-  return out.length <= 6 ? out : [];                // più di 6 mesi: probabile falso positivo
+  // liste sciolte di mesi: oltre 6 è un probabile falso positivo; un INTERVALLO esplicito vale fino a 12
+  return out.length <= (wasRange ? 12 : 6) ? out : [];
 }
 
 function shiftMonth(ym, delta){
@@ -1577,6 +1594,15 @@ function importMovements(list, ownerId, importId){
   for (const mv of list){
     const key = dedupKey(mv.date, mv.amount, mv.cpNorm);
     if (state.movements[key]){ dups++; continue; }
+    // dedup tollerante ai formati: stesso giorno + stesso importo + ordinante compatibile
+    // (le banche scrivono lo stesso nome in modi diversi da un export all'altro)
+    const cents = Math.round(mv.amount * 100);
+    let fuzzyDup = false;
+    for (const ex of Object.values(state.movements)){
+      if (ex.date === mv.date && !ex.manual && Math.round(ex.amount * 100) === cents &&
+          (ex.cpNorm === mv.cpNorm || namesCompatible(ex.cpNorm, mv.cpNorm))){ fuzzyDup = true; break; }
+    }
+    if (fuzzyDup){ dups++; continue; }
     const base = { key, date: mv.date, desc: mv.desc, amount: mv.amount, cp: mv.cp, cpNorm: mv.cpNorm,
       ownerId: ownerId || null, importId: importId || null,
       refMonth: mv.refMonth || null, splits: mv.splits || null, autoRef: !!mv.autoRef };
