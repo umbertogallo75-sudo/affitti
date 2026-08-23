@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.12.2';
+const APP_VERSION = 'v3.13';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -860,20 +860,34 @@ function shiftMonth(ym, delta){
 function detectAmbiguous(keys){
   const out = [];
   const sums = sumsByTenantMonth();
+  const os = sumsByTenantOwner();
   for (const k of keys){
     const m = state.movements[k];
     // niente domanda se la causale ha già dichiarato la competenza (o è suddiviso)
-    if (!m || m.ignored || !m.tenantId || m.refMonth || m.autoRef || (m.splits && m.splits.length)) continue;
+    if (!m || m.ignored || !m.tenantId || m.refMonth || m.autoRef || (m.splits && m.splits.length) || m.deposit) continue;
     const t = state.tenants[m.tenantId];
-    if (!t || !t.expected) continue;
+    if (!t) continue;
+    const att = expectedFor(t, m.ownerId) || t.expected;
+    if (!att) continue;
     const ym = m.date.slice(0,7);
+    // importo pari a PIÙ mensilità intere (2..24): probabile pagamento cumulativo di più mesi
+    const nMesi = Math.round(m.amount / att);
+    if (nMesi >= 2 && nMesi <= 24 && Math.abs(m.amount - nMesi * att) <= Math.max(1, att * 0.02)){
+      // mese di partenza proposto: il primo non ancora coperto su questo conto
+      const cov = (os[m.ownerId || 'none'] || {})[t.id] || {};
+      let last = null;
+      for (const y in cov) if (cov[y] >= att * 0.5 && (!last || y > last)) last = y;
+      const start = last ? shiftMonth(last, 1) : shiftMonth(ym, -(nMesi - 1));
+      out.push({ key: k, multi: nMesi, att, start });
+      continue;
+    }
     const prev = shiftMonth(ym,-1), next = shiftMonth(ym,1);
     const sumPrev = sums[t.id]?.[prev] || 0;
     const sumYmOthers = (sums[t.id]?.[ym] || 0) - m.amount;
-    const partial = m.amount < t.expected - 0.01;
-    if (partial && sumPrev < t.expected - 0.01 && sumPrev + m.amount <= t.expected * 1.2){
+    const partial = m.amount < att - 0.01;
+    if (partial && sumPrev < att - 0.01 && sumPrev + m.amount <= att * 1.2){
       out.push({ key:k, suggest: sumPrev > 0 ? prev : ym });     // può completare il mese precedente
-    } else if (sumYmOthers >= t.expected - 0.01){
+    } else if (sumYmOthers >= att - 0.01){
       out.push({ key:k, suggest: next });                        // mese già saldato: probabile anticipo
     }
   }
@@ -2079,6 +2093,24 @@ function openRefModal(items){
     const m = state.movements[it.key];
     const t = state.tenants[m.tenantId];
     const ym = m.date.slice(0,7);
+    // caso MULTI-MESE: importo = N mensilità intere → proponi la suddivisione su N mesi
+    if (it.multi){
+      const startOpts = [];
+      for (let d = -14; d <= 3; d++){
+        const y = shiftMonth(it.start, d);
+        startOpts.push(`<option value="${y}" ${y===it.start?'selected':''}>da ${monthLabel(y)} a ${monthLabel(shiftMonth(y, it.multi-1))}</option>`);
+      }
+      return `<div class="mrow" style="gap:12px;flex-wrap:wrap">
+        <div style="min-width:0;flex:1">
+          <b>${escapeHtml(t.name)}</b> · <span class="amount pos">${fmtEur(m.amount)}</span> <span class="badge warn">${it.multi} mensilità da ${fmtEur(it.att)}</span>
+          <div class="muted" style="font-size:.75rem">bonifico del ${m.date.split('-').reverse().join('/')} — l'importo corrisponde a ${it.multi} mesi di fitto: suddividere?</div>
+        </div>
+        <select data-multikey="${escapeHtml(it.key)}" data-n="${it.multi}" data-att="${it.att}" style="width:auto;flex-shrink:0">
+          ${startOpts.join('')}
+          <option value="__single__">No: conta come pagamento singolo</option>
+        </select>
+      </div>`;
+    }
     const opts = [shiftMonth(ym,-1), ym, shiftMonth(ym,1)].map(y=>{
       const hint = y<ym ? ' (completa il mese precedente)' : y>ym ? ' (anticipo)' : ' (mese del bonifico)';
       return `<option value="${y}" ${y===it.suggest?'selected':''}>${monthLabel(y)}${hint}</option>`;
@@ -2096,10 +2128,24 @@ function openRefModal(items){
 
 function refConfirm(){
   const changed = [];
-  document.querySelectorAll('#ref-body select').forEach(sel=>{
+  document.querySelectorAll('#ref-body select[data-refkey]').forEach(sel=>{
     const m = state.movements[sel.dataset.refkey];
     if (!m) return;
     m.refMonth = (sel.value === m.date.slice(0,7)) ? null : sel.value;
+    changed.push(m);
+  });
+  // pagamenti cumulativi: suddivisione su N mesi consecutivi (l'ultima quota assorbe gli arrotondamenti)
+  document.querySelectorAll('#ref-body select[data-multikey]').forEach(sel=>{
+    const m = state.movements[sel.dataset.multikey];
+    if (!m || sel.value === '__single__') return;
+    const n = +sel.dataset.n, att = +sel.dataset.att;
+    const splits = [];
+    let y = sel.value;
+    for (let i = 0; i < n; i++){
+      splits.push({ ym: y, amount: i === n-1 ? Math.round((m.amount - att*(n-1))*100)/100 : att });
+      y = shiftMonth(y, 1);
+    }
+    m.splits = splits; m.refMonth = null;
     changed.push(m);
   });
   if (sb && changed.length) dbUpsertMovs(changed);
