@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.14';
+const APP_VERSION = 'v3.15';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2290,12 +2290,13 @@ async function generaPdfPanoramica(){
     const eur = n => n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
     const header = () => {
       doc.setFontSize(11); doc.setTextColor(20);
-      doc.text(`Panoramica pagamenti  ${monthLabelFull(da)} → ${monthLabelFull(a)}`, 8, 9);
+      doc.text(`Panoramica pagamenti  ${monthLabelFull(da)} - ${monthLabelFull(a)}`, 8, 9);
       doc.setFontSize(7.5); doc.setTextColor(110);
-      doc.text('Gallo Holding — Affitti · generato il ' + new Date().toLocaleDateString('it-IT'), 8, 13);
+      doc.text('Gallo Holding Affitti - generato il ' + new Date().toLocaleDateString('it-IT'), 8, 13);
     };
     let startY = 17;
     const grandTot = {};
+    const arretrati = [];   // riepilogo finale: chi ha mesi non pagati e quanto deve
     for (const g of groups){
       const body = [];
       const gTot = {};
@@ -2305,26 +2306,34 @@ async function generaPdfPanoramica(){
         const s = (ownSums[g.oid] && ownSums[g.oid][t.id]) || {};
         const mesiT = Object.keys(s).sort();
         const row = [{ content: t.name + (t.ceased?' (cessato)':'') + (att ? '\natteso ' + eur(att) : ''), styles:{ halign:'left', fontStyle:'bold', fillColor:[255,255,255] } }];
+        const mancanti = [];
+        let dovuto = 0;
         for (const ym of months){
           const sum = s[ym] || 0;
           gTot[ym] = (gTot[ym]||0) + sum;
           const before = dec ? ym < dec : (mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]));
           const cls = cellClass(sum, att, ym > curYM || (t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1]), before);
           const extra = (cls==='ok' && att && sum > att + 0.01) ? sum - att : 0;
-          const label = cls==='na' ? '—' : (sum>0 ? (extra ? eur(att)+'\n+'+eur(extra)+' extra' : eur(sum)) : '✗');
+          const label = cls==='na' ? '-' : (sum>0 ? (extra ? eur(att)+'\n+'+eur(extra)+' extra' : eur(sum)) : 'X');
+          if (ym <= curYM && (cls==='bad' || cls==='warn')){
+            mancanti.push(ym);
+            if (att) dovuto += att - Math.min(sum, att);
+          }
           row.push({ content: label, styles:{ fillColor: COL[cls], textColor: cls==='bad' ? [143,61,61] : [30,30,30] } });
         }
+        if (mancanti.length) arretrati.push({ prop: g.label, nome: t.name + (t.ceased?' (cessato)':''), mesi: mancanti, dovuto: att ? dovuto : null });
         body.push(row);
       }
       const totRow = [{ content:'Totale ' + g.label, styles:{ halign:'left', fontStyle:'bold', fillColor: COL.tot } }];
       for (const ym of months){ grandTot[ym] = (grandTot[ym]||0) + (gTot[ym]||0);
-        totRow.push({ content: gTot[ym] ? eur(gTot[ym]) : '—', styles:{ fontStyle:'bold', fillColor: COL.tot } }); }
+        totRow.push({ content: gTot[ym] ? eur(gTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.tot } }); }
       body.push(totRow);
       doc.autoTable({
-        head: [[ '👤 ' + g.label, ...months.map(monthLabel) ]],
+        head: [[ g.label, ...months.map(monthLabel) ]],
         body, startY,
-        styles: { fontSize: 6.6, cellPadding: 1.2, halign:'center', valign:'middle', lineColor:[220,224,230], lineWidth:0.15 },
-        headStyles: { fillColor: COL.grand, textColor: 255, fontSize: 7 },
+        styles: { fontSize: 7.6, cellPadding: 1.8, halign:'center', valign:'middle', lineColor:[225,229,235], lineWidth:0.1 },
+        alternateRowStyles: { fillColor: [250,251,253] },
+        headStyles: { fillColor: COL.grand, textColor: 255, fontSize: 8 },
         columnStyles: { 0: { cellWidth: 40, halign:'left' } },
         margin: { top: 16, left: 8, right: 8, bottom: 10 },
         didDrawPage: header
@@ -2333,13 +2342,59 @@ async function generaPdfPanoramica(){
       if (startY > 175){ doc.addPage(); startY = 17; }
     }
     // totale assoluto
-    const grandRow = [{ content:'Σ TOTALE ASSOLUTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.grand, textColor:255 } }];
-    for (const ym of months) grandRow.push({ content: grandTot[ym] ? eur(grandTot[ym]) : '—', styles:{ fontStyle:'bold', fillColor: COL.grand, textColor:255 } });
+    const grandRow = [{ content:'TOTALE ASSOLUTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.grand, textColor:255 } }];
+    for (const ym of months) grandRow.push({ content: grandTot[ym] ? eur(grandTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.grand, textColor:255 } });
     doc.autoTable({ head: [[ '', ...months.map(monthLabel) ]], body: [grandRow], startY,
-      styles: { fontSize: 6.6, cellPadding: 1.2, halign:'center', lineColor:[220,224,230], lineWidth:0.15 },
-      headStyles: { fillColor: [120,128,140], textColor: 255, fontSize: 7 },
+      styles: { fontSize: 7.6, cellPadding: 1.8, halign:'center', lineColor:[225,229,235], lineWidth:0.1 },
+      headStyles: { fillColor: [120,128,140], textColor: 255, fontSize: 8 },
       columnStyles: { 0: { cellWidth: 40, halign:'left' } },
       margin: { top: 16, left: 8, right: 8, bottom: 10 }, didDrawPage: header });
+    // ---- ULTIMA PAGINA: riepilogo di chi ha pagamenti arretrati, solo i totali ----
+    doc.addPage();
+    doc.setFontSize(13); doc.setTextColor(20);
+    doc.text('Riepilogo pagamenti arretrati', 8, 14);
+    doc.setFontSize(8); doc.setTextColor(110);
+    doc.text('Mesi non pagati (o pagati in parte) fino a ' + monthLabelFull(curYM <= a ? curYM : a) + ' e saldo dovuto per inquilino.', 8, 19);
+    if (!arretrati.length){
+      doc.setFontSize(11); doc.setTextColor(60);
+      doc.text('Nessun pagamento arretrato nel periodo. Tutto regolare.', 8, 30);
+    } else {
+      const compattaMesi = list => {
+        const seg = [];
+        let i = 0;
+        while (i < list.length){
+          let j = i;
+          while (j+1 < list.length && shiftMonth(list[j],1) === list[j+1]) j++;
+          seg.push(i===j ? monthLabelFull(list[i]) : 'da ' + monthLabelFull(list[i]) + ' ad ' + monthLabelFull(list[j]));
+          i = j+1;
+        }
+        return seg.join(' - ');
+      };
+      const corpo = arretrati.map(x=>[
+        { content: x.prop, styles:{ halign:'left' } },
+        { content: x.nome, styles:{ halign:'left', fontStyle:'bold' } },
+        { content: compattaMesi(x.mesi), styles:{ halign:'left' } },
+        { content: String(x.mesi.length), styles:{ halign:'center' } },
+        { content: x.dovuto != null ? eur(x.dovuto) : 'atteso non impostato', styles:{ halign:'right', fontStyle:'bold', textColor:[143,61,61] } }
+      ]);
+      const totDovuto = arretrati.reduce((acc,x)=>acc + (x.dovuto||0), 0);
+      corpo.push([
+        { content:'', styles:{ fillColor: COL.grand } },
+        { content:'TOTALE ARRETRATI', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.grand, textColor:255 } },
+        { content:'', styles:{ fillColor: COL.grand } },
+        { content: String(arretrati.reduce((acc,x)=>acc + x.mesi.length, 0)), styles:{ halign:'center', fontStyle:'bold', fillColor: COL.grand, textColor:255 } },
+        { content: eur(totDovuto), styles:{ halign:'right', fontStyle:'bold', fillColor: COL.grand, textColor:255 } }
+      ]);
+      doc.autoTable({
+        head: [[ 'Proprietario', 'Inquilino', 'Periodo arretrato', 'Mesi', 'Saldo dovuto' ]],
+        body: corpo, startY: 24,
+        styles: { fontSize: 9, cellPadding: 2.4, valign:'middle', lineColor:[225,229,235], lineWidth:0.1 },
+        alternateRowStyles: { fillColor: [253,246,246] },
+        headStyles: { fillColor: [143,61,61], textColor: 255, fontSize: 9.5 },
+        columnStyles: { 3: { halign:'center', cellWidth: 16 }, 4: { halign:'right', cellWidth: 40 } },
+        margin: { top: 24, left: 8, right: 8, bottom: 10 }
+      });
+    }
     doc.save(`Panoramica_${da}_${a}.pdf`);
     closeModal('printmodal');
     showToast('📄 PDF creato e scaricato.');
