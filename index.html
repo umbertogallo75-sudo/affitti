@@ -506,7 +506,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.18';
+const APP_VERSION = 'v3.19';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2561,7 +2561,12 @@ function cellClass(sum, expected, isFuture, beforeStart){
 
 function renderPanoramica(){
   const el = $('view-panoramica');
-  const months = monthsRange();
+  const allMonths = monthsRange();
+  // filtro periodo a video: mostra solo i mesi scelti (es. un solo mese, tutto incolonnato)
+  let months = allMonths;
+  if (ui.panDa && allMonths.includes(ui.panDa)) months = months.filter(ym => ym >= ui.panDa);
+  if (ui.panA && allMonths.includes(ui.panA)) months = months.filter(ym => ym <= ui.panA);
+  if (!months.length) months = allMonths;
   if (!activeMovements().length || !months.length){
     el.innerHTML = `<div class="card empty">
       <div style="font-size:2.5rem">🏠</div>
@@ -2593,6 +2598,20 @@ function renderPanoramica(){
   <div class="segmented" style="max-width:360px">
     <button class="${ui.vista==='inquilini'?'active':''}" onclick="ui.vista='inquilini';renderPanoramica()">👥 Per inquilino</button>
     <button class="${ui.vista==='immobili'?'active':''}" onclick="ui.vista='immobili';renderPanoramica()">🏠 Per immobile</button>
+  </div>
+  <div class="card only-desktop" style="padding:9px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+    <b style="font-size:.82rem">📅 Periodo in griglia:</b>
+    <select style="width:auto" onchange="ui.panDa=this.value||null;renderPanoramica()">
+      <option value="">dal primo mese</option>
+      ${allMonths.map(ym=>`<option value="${ym}" ${ui.panDa===ym?'selected':''}>${monthLabel(ym)}</option>`).join('')}
+    </select>
+    <span class="muted">→</span>
+    <select style="width:auto" onchange="ui.panA=this.value||null;renderPanoramica()">
+      <option value="">all'ultimo mese</option>
+      ${allMonths.map(ym=>`<option value="${ym}" ${ui.panA===ym?'selected':''}>${monthLabel(ym)}</option>`).join('')}
+    </select>
+    <button class="btn small secondary" onclick="ui.panDa=nowYM();ui.panA=nowYM();renderPanoramica()">Solo mese corrente</button>
+    <button class="btn small secondary" onclick="ui.panDa=null;ui.panA=null;renderPanoramica()">Tutto il periodo</button>
   </div>` + (()=>{
     const avvisi = computeAlerts();
     return avvisi.length ? `<div class="card" style="background:var(--warn);border-color:#E8D9A8;padding:12px 14px">
