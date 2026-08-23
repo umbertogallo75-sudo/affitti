@@ -502,7 +502,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.15';
+const APP_VERSION = 'v3.16';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2297,6 +2297,8 @@ async function generaPdfPanoramica(){
     let startY = 17;
     const grandTot = {};
     const arretrati = [];   // riepilogo finale: chi ha mesi non pagati e quanto deve
+    const prevTot = {};     // totale previsto per mese (somma dei fitti attesi dovuti)
+    const mancTot = {};     // mancante per mese (atteso non incassato)
     for (const g of groups){
       const body = [];
       const gTot = {};
@@ -2318,6 +2320,10 @@ async function generaPdfPanoramica(){
           if (ym <= curYM && (cls==='bad' || cls==='warn')){
             mancanti.push(ym);
             if (att) dovuto += att - Math.min(sum, att);
+          }
+          if (cls !== 'na' && att){
+            prevTot[ym] = (prevTot[ym]||0) + att;
+            mancTot[ym] = (mancTot[ym]||0) + Math.max(0, att - sum);
           }
           row.push({ content: label, styles:{ fillColor: COL[cls], textColor: cls==='bad' ? [143,61,61] : [30,30,30] } });
         }
@@ -2344,7 +2350,12 @@ async function generaPdfPanoramica(){
     // totale assoluto
     const grandRow = [{ content:'TOTALE ASSOLUTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.grand, textColor:255 } }];
     for (const ym of months) grandRow.push({ content: grandTot[ym] ? eur(grandTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.grand, textColor:255 } });
-    doc.autoTable({ head: [[ '', ...months.map(monthLabel) ]], body: [grandRow], startY,
+    // sotto il totale assoluto: quanto MANCA rispetto agli attesi e il TOTALE PREVISTO se tutti avessero pagato
+    const mancRow = [{ content:'MANCANTE', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.bad, textColor:[143,61,61] } }];
+    for (const ym of months) mancRow.push({ content: mancTot[ym] > 0.005 ? eur(mancTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.bad, textColor:[143,61,61] } });
+    const prevRow = [{ content:'TOTALE PREVISTO', styles:{ halign:'left', fontStyle:'bold', fillColor: COL.tot } }];
+    for (const ym of months) prevRow.push({ content: prevTot[ym] ? eur(prevTot[ym]) : '-', styles:{ fontStyle:'bold', fillColor: COL.tot } });
+    doc.autoTable({ head: [[ '', ...months.map(monthLabel) ]], body: [grandRow, mancRow, prevRow], startY,
       styles: { fontSize: 7.6, cellPadding: 1.8, halign:'center', lineColor:[225,229,235], lineWidth:0.1 },
       headStyles: { fillColor: [120,128,140], textColor: 255, fontSize: 8 },
       columnStyles: { 0: { cellWidth: 40, halign:'left' } },
