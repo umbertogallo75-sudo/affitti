@@ -506,7 +506,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.19';
+const APP_VERSION = 'v3.20';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2316,16 +2316,17 @@ async function generaPdfPanoramica(){
         for (const ym of months){
           const sum = s[ym] || 0;
           gTot[ym] = (gTot[ym]||0) + sum;
+          const attY = expectedFor(t, g.oid, ym);
           const before = dec ? ym < dec : (mesiT.length ? ym < mesiT[0] : (firstMonth[t.id] && ym < firstMonth[t.id]));
-          const cls = cellClass(sum, att, ym > curYM || (t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1]), before);
-          const extra = (cls==='ok' && att && sum > att + 0.01) ? sum - att : 0;
-          const label = cls==='na' ? '-' : (sum>0 ? (extra ? eur(att)+'\n+'+eur(extra)+' extra' : eur(sum)) : 'X');
+          const cls = cellClass(sum, attY, ym > curYM || (t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1]), before);
+          const extra = (cls==='ok' && attY && sum > attY + 0.01) ? sum - attY : 0;
+          const label = cls==='na' ? '-' : (sum>0 ? (extra ? eur(attY)+'\n+'+eur(extra)+' extra' : eur(sum)) : 'X');
           if (ym <= curYM && (cls==='bad' || cls==='warn')){
             mancanti.push(ym);
-            if (att) dovuto += att - Math.min(sum, att);
+            if (attY) dovuto += attY - Math.min(sum, attY);
           }
-          if (cls !== 'na' && att){
-            mancTot[ym] = (mancTot[ym]||0) + Math.max(0, att - sum);
+          if (cls !== 'na' && attY){
+            mancTot[ym] = (mancTot[ym]||0) + Math.max(0, attY - sum);
           }
           row.push({ content: label, styles:{ fillColor: COL[cls], textColor: cls==='bad' ? [143,61,61] : [30,30,30] } });
         }
@@ -2532,10 +2533,19 @@ function sumsByTenantOwner(){
   return out;
 }
 
-/* fitto atteso per uno specifico proprietario (con fallback sull'atteso generale) */
-function expectedFor(t, ownerId){
-  if (t.expectedByOwner && ownerId && t.expectedByOwner[ownerId] != null) return +t.expectedByOwner[ownerId] || null;
-  return t.expected;
+/* fitto atteso per proprietario e (opzionale) mese: gli aumenti nel tempo (ISTAT, rinnovi)
+   sono registrati in contract.attesiStorici = [{ownerId, dal:'YYYY-MM', importo}].
+   Senza ym restituisce l'atteso ATTUALE. */
+function expectedFor(t, ownerId, ym){
+  let base = (t.expectedByOwner && ownerId && t.expectedByOwner[ownerId] != null)
+    ? (+t.expectedByOwner[ownerId] || null) : t.expected;
+  const steps = t.contract && t.contract.attesiStorici;
+  if (steps && steps.length){
+    const rif = ym || nowYM();
+    for (const s of [...steps].sort((a,b)=>String(a.dal).localeCompare(String(b.dal))))
+      if ((!s.ownerId || s.ownerId === ownerId) && rif >= s.dal) base = +s.importo || base;
+  }
+  return base;
 }
 
 /* celle con almeno un movimento associato automaticamente dalla causale (asterisco) */
@@ -2676,14 +2686,14 @@ function renderPanoramica(){
     const afterCeased = t.ceased && sum<=0 && mesiT.length && ym > mesiT[mesiT.length-1];
     const tips = (cellFor(t, ym) || {}).tip;   // tooltip quote multi-mese (globale)
     const isSplit = !!(cellFor(t, ym) || {}).split && sum>0;
-    return { sum, cls: cellClass(sum, expectedFor(t, oid), future || afterCeased, before), split:isSplit, tip:tips||'' };
+    return { sum, cls: cellClass(sum, expectedFor(t, oid, ym), future || afterCeased, before), split:isSplit, tip:tips||'' };
   };
   // MANCANTE per mese: quota di fitto atteso non incassata (per inquilino, senza compensazioni)
   const mancTot = {};
   for (const g of groups) for (const t of g.list){
-    const attG = expectedFor(t, g.oid);
-    if (!attG) continue;
     for (const ym of months){
+      const attG = expectedFor(t, g.oid, ym);
+      if (!attG) continue;
       const cG = cellForOwner(t, ym, g.oid);
       if (cG.cls === 'na') continue;
       mancTot[ym] = (mancTot[ym]||0) + Math.max(0, attG - cG.sum);
@@ -2703,9 +2713,10 @@ function renderPanoramica(){
       const c = cellForOwner(t, ym, oid);
       const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '<span title="competenza letta dalla causale — clicca per vedere il bonifico">✱</span>' : '';
       // pagato più dell'atteso (es. fitto + quota imposta di registro): mostra il canone e, in piccolo, l'extra
-      const extra = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
+      const attY = expectedFor(t, oid, ym);
+      const extra = (c.cls==='ok' && attY && c.sum > attY + 0.01) ? c.sum - attY : 0;
       const label = (c.cls==='na') ? '—'
-        : c.sum>0 ? (extra ? fmtEur(att)+star+`<span class="extraamt" title="importo oltre il canone (es. imposta di registro, conguagli)">+${fmtEur(extra)} extra</span>` : fmtEur(c.sum)+star)
+        : c.sum>0 ? (extra ? fmtEur(attY)+star+`<span class="extraamt" title="importo oltre il canone (es. imposta di registro, conguagli)">+${fmtEur(extra)} extra</span>` : fmtEur(c.sum)+star)
         : '✗';
       const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${oid}')"`;
       const isSplit = c.split && c.cls!=='na';
@@ -2813,7 +2824,8 @@ function renderPanoramica(){
         for (const ym of months){
           const sum = s[ym] || 0;
           const before = mesiP.length ? ym < mesiP[0] : true;
-          const cls = cellClass(sum, attesoP, ym > curYM, before && sum<=0);
+          const attesoPy = attivi.reduce((a2,t2)=>a2 + (expectedFor(t2, g.oid, ym)||0), 0) || null;
+          const cls = cellClass(sum, attesoPy, ym > curYM, before && sum<=0);
           const who = payNames[g.oid+'|'+pid+'|'+ym];
           const tip = who ? `Pagato da: ${[...who].join(', ')}` : '';
           const click = cls==='na' ? '' : ` onclick="openCellProp('${pid}','${ym}','${g.oid}')"`;
@@ -2827,7 +2839,8 @@ function renderPanoramica(){
             const sum = s[ym] || 0;
             pSum += sum;
             const before = mesiP.length ? ym < mesiP[0] : true;
-            const cls = cellClass(sum, attesoP, ym > curYM, before && sum<=0);
+            const attesoPy2 = attivi.reduce((a2,t2)=>a2 + (expectedFor(t2, g.oid, ym)||0), 0) || null;
+            const cls = cellClass(sum, attesoPy2, ym > curYM, before && sum<=0);
             const click = cls==='na' ? '' : ` onclick="openCellProp('${pid}','${ym}','${g.oid}')"`;
             chips += `<span class="chipmese ${cls}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${cls==='na'?'—':(sum>0?Math.round(sum)+'€':'✗')}</b></span>`;
           }
@@ -2839,7 +2852,8 @@ function renderPanoramica(){
           // riga mobile: solo il mese selezionato, grande e leggibile
           const sumSel = s[selYM] || 0;
           const beforeSel = mesiP.length ? selYM < mesiP[0] : true;
-          const clsSel = cellClass(sumSel, attesoP, selYM > curYM, beforeSel && sumSel<=0);
+          const attesoPSel = attivi.reduce((a2,t2)=>a2 + (expectedFor(t2, g.oid, selYM)||0), 0) || null;
+          const clsSel = cellClass(sumSel, attesoPSel, selYM > curYM, beforeSel && sumSel<=0);
           const whoSel = payNames[g.oid+'|'+pid+'|'+selYM];
           const subParts = [];
           if (ts.length) subParts.push('👥 ' + ts.map(t=>t.name).join(', '));
@@ -2910,8 +2924,9 @@ function renderPanoramica(){
           if (c.cls!=='na') tSum += c.sum;
           const star = marks.has(t.id+'|'+ym) && c.sum>0 ? '✱' : '';
           const click = c.cls==='na' ? '' : ` onclick="openCell('${t.id}','${ym}','${g.oid}')"`;
-          const extraP = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
-          chips += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?(extraP?Math.round(att):Math.round(c.sum))+'€'+star:'✗')}</b>${extraP?`<span class="extraamt">+${Math.round(extraP)}€</span>`:''}</span>`;
+          const attP = expectedFor(t, g.oid, ym);
+          const extraP = (c.cls==='ok' && attP && c.sum > attP + 0.01) ? c.sum - attP : 0;
+          chips += `<span class="chipmese ${c.cls}${c.split&&c.cls!=='na'?' split':''}"${click}>${monthLabel(ym).split(' ')[0]}<br><b>${c.cls==='na'?'—':(c.sum>0?(extraP?Math.round(attP):Math.round(c.sum))+'€'+star:'✗')}</b>${extraP?`<span class="extraamt">+${Math.round(extraP)}€</span>`:''}</span>`;
         }
         html += `<div class="mcard">
           <h3 onclick="openTenant('${t.id}')">${escapeHtml(t.name)}${t.ceased?' <span class="badge na">cessato</span>':''} <b style="font-variant-numeric:tabular-nums">${tSum?fmtEur(tSum):'—'}</b></h3>
@@ -2964,10 +2979,11 @@ function renderPanoramica(){
       if (t.propertyId && propName(t.propertyId)) subParts.push('🏠 ' + propName(t.propertyId));
       if (att) subParts.push('atteso ' + fmtEur(att));
       else if (!t.ceased) subParts.push('⚠️ fitto da impostare');
-      const extraM = (c.cls==='ok' && att && c.sum > att + 0.01) ? c.sum - att : 0;
+      const attM = expectedFor(t, g.oid, selYM);
+      const extraM = (c.cls==='ok' && attM && c.sum > attM + 0.01) ? c.sum - attM : 0;
       const amt = c.cls==='na' ? '<span class="muted">—</span>'
         : c.sum>0 ? (extraM
-            ? `<span style="display:flex;flex-direction:column;align-items:flex-end"><b class="${c.split?'splitink':''}">${fmtEur(att)}${star}</b><span class="extraamt">+${fmtEur(extraM)} extra</span></span>`
+            ? `<span style="display:flex;flex-direction:column;align-items:flex-end"><b class="${c.split?'splitink':''}">${fmtEur(attM)}${star}</b><span class="extraamt">+${fmtEur(extraM)} extra</span></span>`
             : `<b class="${c.split?'splitink':''}">${fmtEur(c.sum)}${star}</b>`)
         : '<b class="badink">✗</b>';
       const click = c.cls==='na' ? ` onclick="openTenant('${t.id}')"` : ` onclick="openCell('${t.id}','${selYM}','${g.oid}')"`;
