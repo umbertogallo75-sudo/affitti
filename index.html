@@ -506,7 +506,7 @@ let appStarted = false;
 let state = { tenants: {}, movements: {}, owners: {}, ignored: {}, importLog: {}, properties: {}, nextId: 1 };
 /* filtri correnti della panoramica/inquilini */
 let ui = { q: '', owner: 'all', status: 'active', sort: 'morosi', anagTab: 'inquilini', vista: 'inquilini' };
-const APP_VERSION = 'v3.20';
+const APP_VERSION = 'v3.21';
 
 function newId(prefix){
   return prefix + (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2));
@@ -2076,7 +2076,9 @@ function triageCancel(){
 function finishImport(list, ownerId, skipped){
   const importId = newId('imp-');
   const res = importMovements(list, ownerId, importId);
-  if (res.added || res.dups || res.ignoredCount || res.unassigned){
+  // il log si registra anche a zero entrate (file di sole uscite/commissioni),
+  // così "ultima importazione" e la copertura del periodo risultano aggiornate
+  if (res.added || res.dups || res.ignoredCount || res.unassigned || currentFileRange){
     state.importLog[importId] = { id: importId, file: currentFileName || 'import', quando: new Date().toISOString(),
       ownerId: ownerId || null, added: res.added, dups: res.dups, ignoredCount: res.ignoredCount, unassigned: res.unassigned,
       dal: currentFileRange ? currentFileRange.dal : null, al: currentFileRange ? currentFileRange.al : null };
@@ -2085,7 +2087,10 @@ function finishImport(list, ownerId, skipped){
   renderAll();
   switchView(res.unassigned ? 'daassegnare' : 'panoramica');
   const pfx = queueTotal > 1 ? `"${currentFileName}": ` : '';
-  showToast(pfx + `abbinati ${res.added} movimenti` +
+  const soloUscite = !list.length && skipped > 0;
+  showToast(soloUscite
+    ? pfx + `nessuna entrata nel file: le ${skipped} righe sono tutte uscite o commissioni. Periodo comunque registrato come coperto.`
+    : pfx + `abbinati ${res.added} movimenti` +
     (res.unassigned ? ` · ${res.unassigned} da assegnare` : '') +
     ` · ${res.dups} duplicati scartati` +
     (res.ignoredCount ? ` · ${res.ignoredCount} di ordinanti scartati` : '') +
